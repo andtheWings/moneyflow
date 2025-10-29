@@ -42,20 +42,20 @@ pipx install moneyflow
 # Try demo mode first (no account needed)
 moneyflow --demo
 
-# Connect to Monarch Money
+# Connect to Monarch Money or YNAB
 moneyflow
 
 # Analyze Amazon purchase history
 moneyflow amazon import ~/Downloads/"Your Orders"
 moneyflow amazon
 
-# Load only recent data (Monarch)
+# Load only recent data
 moneyflow --year 2025
 ```
 
 **First-time Monarch Money setup:** You'll need your 2FA secret key. See the [Monarch Money setup guide](https://moneyflow.dev/guide/monarch).
 
-**First-time YNAB setup:** You'll need a Personal Access Token from your YNAB account settings.
+**First-time YNAB setup:** You'll need a Personal Access Token from your YNAB account settings. See the [YNAB setup guide](https://moneyflow.dev/guide/ynab).
 
 ---
 
@@ -96,23 +96,6 @@ Learn more: [Navigation & Search Guide](https://moneyflow.dev/guide/navigation)
 
 ---
 
-## YNAB Mode
-
-Connect to your YNAB (You Need A Budget) account:
-
-1. Sign in to the YNAB web app
-2. Go to Account Settings → Developer Settings
-3. Click "New Token" under Personal Access Tokens
-4. Enter your password and click "Generate"
-5. Copy the access token (you won't be able to see it again)
-6. Run: `moneyflow`
-7. Select YNAB as your backend
-8. Paste your access token when prompted
-
-**Note:** Your access token will be encrypted and stored locally for future use.
-
----
-
 ## Amazon Mode
 
 Import and analyze your Amazon purchase history:
@@ -129,16 +112,16 @@ See [Amazon Mode Guide](https://moneyflow.dev/guide/amazon-mode) for details.
 ## Troubleshooting
 
 **Login fails with "Incorrect password"**
-→ Enter your **encryption password** (for moneyflow), not your Monarch password
+→ Enter your **encryption password** (for moneyflow), not your backend password
 → If forgotten: Click "Reset Credentials" or delete `~/.moneyflow/`
 
-**2FA not working**
+**Monarch Money - 2FA not working**
 → Copy the BASE32 secret (long string), not the QR code
 → Get fresh secret: Disable and re-enable 2FA in Monarch Money
 
-**YNAB connection fails**
+**YNAB - Connection fails**
 → Verify your Personal Access Token is correct
-→ Token may have expired - generate a new one from Account Settings → Developer Settings
+→ Token may have expired - generate a new one from YNAB Developer Settings
 → Make sure you copied the entire token (no spaces before/after)
 → Token is only shown once - if lost, generate a new one
 
@@ -166,6 +149,7 @@ More help: [Troubleshooting Guide](https://moneyflow.dev/reference/troubleshooti
 - [Editing Transactions](https://moneyflow.dev/guide/editing)
 - [Keyboard Shortcuts](https://moneyflow.dev/guide/keyboard-shortcuts)
 - [Monarch Money Setup](https://moneyflow.dev/guide/monarch)
+- [YNAB Setup](https://moneyflow.dev/guide/ynab)
 - [Amazon Mode](https://moneyflow.dev/guide/amazon-mode)
 
 ---
@@ -219,4 +203,4 @@ Monarch Money® is a trademark of Monarch Money, Inc. This project is independen
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
-**Disclaimer:** Independent open-source project. Not affiliated with or endorsed by Monarch Money, Inc.
+**Disclaimer:** Independent open-source project. Not affiliated with or endorsed by Monarch Money, Inc. or YNAB LLC.
