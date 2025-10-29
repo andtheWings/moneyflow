@@ -96,7 +96,8 @@ moneyflow is designed to be used entirely with the keyboard. Here's your complet
 |-----|--------|
 | ++u++ | Undo most recent pending edit |
 
-Removes the most recent edit from the pending changes queue. Press multiple times to undo edits in reverse order. Shows notification with field type and remaining edit count.
+Removes the most recent edit from the pending changes queue. Press multiple times to undo edits in reverse order.
+Shows notification with field type and remaining edit count.
 
 ---
 
@@ -144,10 +145,12 @@ Works in all aggregate views and sub-grouped views.
 | ++v++ | Reverse sort direction (↑/↓) | Any view |
 
 **In aggregate views** (Merchant/Category/Group):
+
 - ++s++ toggles between Count and Amount
 
 **In detail view** (transactions):
-- ++s++ cycles through: Date → Merchant → Category → Account → Amount → Date
+
+- ++s++ cycles through: Date, Merchant, Category, Account, Amount (repeats)
 
 ---
 
@@ -239,7 +242,7 @@ When in a modal dialog (edit merchant, select category, etc.):
     - The cursor stays in place after edits - keep pressing ++m++ or ++c++
 
 !!! tip "Time Navigation"
-    - ++left++/++right++ maintain context (month→month, year→year)
+    - ++left++/++right++ maintain context (month-to-month, year-to-year)
     - ++y++ is your "reset" - always returns to current year
 
 !!! tip "Review Before Committing"
@@ -253,7 +256,7 @@ When in a modal dialog (edit merchant, select category, etc.):
 
 Print this for reference:
 
-```
+```text
 Views:       g (cycle)  d (detail)  D (duplicates)
 Time:        y (year)   t (month)  a (all)  ←/→ (navigate)
 Edit:        m (merchant)  c (category)  h (hide)  x (delete)  u (undo)

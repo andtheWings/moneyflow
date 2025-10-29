@@ -15,6 +15,7 @@ moneyflow --demo
 This loads synthetic spending data so you can explore all features risk-free.
 
 **What you'll see:**
+
 - 1,000+ transactions
 - Realistic spending patterns
 - Multiple accounts
@@ -46,7 +47,7 @@ Choose your platform:
     4. When shown the QR code, click **"Can't scan?"** or **"Manual entry"**
     5. Copy the secret key (looks like: `JBSWY3DPEHPK3PXP`)
 
-### Step 2: Launch moneyflow
+### Launch moneyflow
 
 ```bash
 moneyflow
@@ -64,7 +65,7 @@ On first run, you'll be prompted for:
 
     Choose something you'll remember - you'll need it each time you launch moneyflow.
 
-### Step 3: Wait for Initial Data Load
+### Wait for Initial Data Load
 
 First run downloads all your transactions:
 
@@ -75,11 +76,11 @@ First run downloads all your transactions:
 !!! success "One-Time Download"
     After the first load, all operations are instant! moneyflow works offline with your data cached locally.
 
-### Step 4: Explore
+### Explore
 
 You're in! Here's what to try:
 
-- Press ++g++ to cycle through Merchants → Categories → Groups
+- Press ++g++ to cycle views: Merchants, Categories, Groups, Accounts
 - Press ++enter++ on any row to drill down
 - Press ++escape++ to go back
 - Press ++question++ for help
@@ -129,7 +130,7 @@ Done! The change is now saved.
     4. Enter your YNAB password and click **"Generate"**
     5. **Copy the token immediately** - you won't see it again
 
-### Step 2: Launch moneyflow
+### Launch moneyflow (YNAB)
 
 ```bash
 moneyflow
@@ -147,9 +148,10 @@ On first run, you'll be prompted for:
     Choose something you'll remember - you'll need it each time you launch moneyflow.
 
 !!! info "Multiple Budgets"
-    If you have multiple YNAB budgets, moneyflow will automatically use the first one. Multi-budget selection UI is not yet implemented.
+    If you have multiple YNAB budgets, moneyflow will automatically use the first one. Multi-budget selection UI is
+    not yet implemented.
 
-### Step 3: Wait for Initial Data Load
+### Wait for Initial Data Load (YNAB)
 
 First run downloads all your transactions:
 
@@ -160,11 +162,11 @@ First run downloads all your transactions:
 !!! success "One-Time Download"
     After the first load, all operations are instant! moneyflow works offline with your data cached locally.
 
-### Step 4: Explore
+### Explore (YNAB)
 
 You're in! Here's what to try:
 
-- Press ++g++ to cycle through Merchants → Categories → Groups → Accounts
+- Press ++g++ to cycle views: Merchants, Categories, Groups, Accounts
 - Press ++enter++ on any row to drill down
 - Press ++escape++ to go back
 - Press ++question++ for help
