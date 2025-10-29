@@ -7,9 +7,10 @@ fully typed and testable.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Literal, Optional, TypedDict
+from typing import Any, Dict, Literal, Optional, TypedDict, Union
 
 import polars as pl
+from rich.text import Text
 
 from .state import SortDirection, SortMode
 
@@ -21,9 +22,11 @@ ColumnKey = Literal["name", "count", "total"]
 class ColumnSpec(TypedDict):
     """Specification for a table column."""
 
-    label: str  # Display label (may include sort arrow)
+    label: Union[
+        str, Text
+    ]  # Display label (may include sort arrow, can be Rich Text for alignment)
     key: str  # Data key
-    width: int  # Column width
+    width: Optional[int]  # Column width (None = auto-fit to content)
 
 
 class PreparedView(TypedDict):
@@ -50,6 +53,35 @@ class ViewPresenter:
     This class is stateless and thread-safe. All methods are static
     to emphasize the pure function nature.
     """
+
+    @staticmethod
+    def format_amount(amount: float, for_table: bool = False) -> Union[str, Text]:
+        """
+        Format dollar amount with sign outside dollar sign.
+
+        Args:
+            amount: The dollar amount to format
+            for_table: If True, return Rich Text with right justification for tables
+
+        Returns:
+            Formatted string like "-$1,234.56" or "+$5,000.00"
+            If for_table=True, returns Rich Text object with right justification
+
+        Examples:
+            >>> ViewPresenter.format_amount(-1234.56)
+            '-$1,234.56'
+            >>> ViewPresenter.format_amount(5000.00)
+            '+$5,000.00'
+            >>> ViewPresenter.format_amount(0.00)
+            '+$0.00'
+        """
+        sign = "-" if amount < 0 else "+"
+        abs_amount = abs(amount)
+        formatted = f"{sign}${abs_amount:,.2f}"
+
+        if for_table:
+            return Text(formatted, justify="right")
+        return formatted
 
     @staticmethod
     def get_sort_arrow(sort_by: SortMode, sort_direction: SortDirection, field: SortMode) -> str:
@@ -177,6 +209,10 @@ class ViewPresenter:
         amount_arrow = ViewPresenter.get_sort_arrow(sort_by, sort_direction, SortMode.AMOUNT)
 
         # Build column specs
+        # Total column label - right-aligned to match the values
+        total_label = f"Total {amount_arrow}".strip()
+        total_label_text = Text(total_label, justify="right")
+
         columns: list[ColumnSpec] = [
             {
                 "label": f"{name_label} {name_arrow}".strip(),
@@ -184,7 +220,7 @@ class ViewPresenter:
                 "width": name_width,
             },
             {"label": f"Count {count_arrow}".strip(), "key": "count", "width": 10},
-            {"label": f"Total {amount_arrow}".strip(), "key": "total", "width": 15},
+            {"label": total_label_text, "key": "total", "width": None},  # Auto-size to content
         ]
 
         # Add top category column for merchant view
@@ -263,9 +299,19 @@ class ViewPresenter:
                 top_category = row_dict.get("top_category", "")
                 top_category_pct = row_dict.get("top_category_pct", 0)
                 top_category_display = f"{top_category} {top_category_pct}%" if top_category else ""
-                rows.append((name, str(count), f"${total:,.2f}", top_category_display, flags))
+                rows.append(
+                    (
+                        name,
+                        str(count),
+                        ViewPresenter.format_amount(total, for_table=True),
+                        top_category_display,
+                        flags,
+                    )
+                )
             else:
-                rows.append((name, str(count), f"${total:,.2f}", flags))
+                rows.append(
+                    (name, str(count), ViewPresenter.format_amount(total, for_table=True), flags)
+                )
 
         return rows
 
@@ -374,6 +420,10 @@ class ViewPresenter:
         merchant_width = column_config.get("merchant_width_pct", 25)
         account_width = column_config.get("account_width_pct", 30)
 
+        # Amount column label - right-aligned to match the values
+        amount_label = f"Amount {amount_arrow}".strip()
+        amount_label_text = Text(amount_label, justify="right")
+
         columns: list[ColumnSpec] = [
             {"label": f"Date {date_arrow}".strip(), "key": "date", "width": 12},
             {
@@ -387,7 +437,7 @@ class ViewPresenter:
                 "key": "account",
                 "width": account_width,
             },
-            {"label": f"Amount {amount_arrow}".strip(), "key": "amount", "width": 12},
+            {"label": amount_label_text, "key": "amount", "width": None},  # Auto-size to content
             {"label": "", "key": "flags", "width": 3},  # Flags column (✓ H *)
         ]
 
@@ -478,7 +528,16 @@ class ViewPresenter:
                 txn_id, selected_ids, hide_from_reports, pending_edit_ids
             )
 
-            rows.append((date, merchant, category, account, f"${amount:,.2f}", flags))
+            rows.append(
+                (
+                    date,
+                    merchant,
+                    category,
+                    account,
+                    ViewPresenter.format_amount(amount, for_table=True),
+                    flags,
+                )
+            )
 
         return rows
 
