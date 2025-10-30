@@ -4,7 +4,7 @@ All notable changes to moneyflow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.6.0] - 2025-10-29
 
 ### Added
 - **YNAB support** - Full integration with You Need A Budget (editing, sync, categories)
