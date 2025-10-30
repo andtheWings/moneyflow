@@ -137,9 +137,6 @@ def load_custom_categories(config_dir: Optional[str] = None) -> Optional[Dict[st
     """
     Load custom category configuration from ~/.moneyflow/config.yaml.
 
-    Supports both new config.yaml format (with categories: section) and
-    legacy categories.yaml format (for backward compatibility).
-
     Args:
         config_dir: Optional custom config directory (default: ~/.moneyflow)
 
@@ -166,9 +163,7 @@ def load_custom_categories(config_dir: Optional[str] = None) -> Optional[Dict[st
         config_dir = str(Path.home() / ".moneyflow")
 
     config_path = Path(config_dir) / "config.yaml"
-    legacy_path = Path(config_dir) / "categories.yaml"
 
-    # Try new config.yaml format first
     if config_path.exists():
         try:
             with open(config_path, "r") as f:
@@ -199,39 +194,8 @@ def load_custom_categories(config_dir: Optional[str] = None) -> Optional[Dict[st
         except Exception as e:
             logger.error(f"Failed to load config: {e}")
             return None
-
-    # Fall back to legacy categories.yaml
-    elif legacy_path.exists():
-        logger.warning(
-            "Using legacy categories.yaml. Please rename to config.yaml and nest under 'categories:' section"
-        )
-        try:
-            with open(legacy_path, "r") as f:
-                config = yaml.safe_load(f)
-
-            if not config:
-                logger.warning(f"Empty categories config at {legacy_path}")
-                return None
-
-            # Validate version
-            version = config.get("version")
-            if version != 1:
-                logger.warning(f"Unsupported categories.yaml version: {version} (expected 1)")
-                return None
-
-            logger.info(f"Loaded custom categories from {legacy_path} (legacy format)")
-            # Return config directly (legacy format has categories at top level)
-            return config
-
-        except yaml.YAMLError as e:
-            logger.error(f"Failed to parse {legacy_path}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to load legacy categories: {e}")
-            return None
-
     else:
-        logger.debug(f"No config file at {config_path} or {legacy_path}")
+        logger.debug(f"No config file at {config_path}")
         return None
 
 
@@ -417,10 +381,10 @@ def save_categories_to_config(
     # Ensure version is set
     config["version"] = 1
 
-    # Store fetched categories
+    # Store fetched categories (preserves all other existing keys in config)
     config["fetched_categories"] = category_groups
 
-    # Write back to file
+    # Write back to file (preserving all existing keys like 'categories', etc.)
     Path(config_dir).mkdir(parents=True, exist_ok=True, mode=0o700)
     with open(config_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
@@ -450,18 +414,20 @@ def build_category_to_group_mapping(category_groups: Dict[str, List[str]]) -> Di
 
 def get_effective_category_groups(config_dir: Optional[str] = None) -> Dict[str, List[str]]:
     """
-    Get effective category groups with priority order:
+    Get category groups (NOT a merge - returns one or the other).
+
+    Priority order:
     1. Fetched categories from backend API (stored in config.yaml)
     2. Built-in defaults from categories.py
 
-    For Monarch/YNAB: Uses fetched_categories from config.yaml (populated on every startup)
+    For Monarch/YNAB: Uses fetched_categories from config.yaml (populated on startup)
     For Demo/Amazon: Uses fetched_categories if available, otherwise built-in defaults
 
     Args:
         config_dir: Optional custom config directory (default: ~/.moneyflow)
 
     Returns:
-        Final category groups dict
+        Category groups dict (either from config.yaml OR defaults, never merged)
     """
     if config_dir is None:
         config_dir = str(Path.home() / ".moneyflow")
