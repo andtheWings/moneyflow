@@ -37,8 +37,14 @@ from .formatters import ViewPresenter
 @click.option(
     "--demo", is_flag=True, help="Run in demo mode with sample data (no authentication required)"
 )
+@click.option(
+    "--config-dir",
+    type=click.Path(),
+    default=None,
+    help="Config directory (default: ~/.moneyflow). Useful for testing with isolated configs.",
+)
 @click.pass_context
-def cli(ctx, year, since, mtd, cache, refresh, demo):
+def cli(ctx, year, since, mtd, cache, refresh, demo, config_dir):
     """moneyflow - Terminal UI for personal finance management.
 
     Run with no arguments to launch the default backend (Monarch Money).
@@ -51,8 +57,11 @@ def cli(ctx, year, since, mtd, cache, refresh, demo):
     # Launch default backend (Monarch Money)
     from moneyflow.app import launch_monarch_mode
 
-    # Convert cache flag to path (None if not enabled, default path if enabled)
-    cache_path = "~/.moneyflow/cache" if cache else None
+    # Convert cache flag to path (None if not enabled, respect config_dir if enabled)
+    if cache:
+        cache_path = f"{config_dir}/cache" if config_dir else "~/.moneyflow/cache"
+    else:
+        cache_path = None
 
     launch_monarch_mode(
         year=year,
@@ -61,6 +70,7 @@ def cli(ctx, year, since, mtd, cache, refresh, demo):
         cache=cache_path,
         refresh=refresh,
         demo=demo,
+        config_dir=config_dir,
     )
 
 
