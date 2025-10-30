@@ -30,6 +30,14 @@ jobs:
         run: |
           uv sync
 
+      - name: Check code formatting (ruff format)
+        run: |
+          uv run ruff format --check moneyflow/ tests/
+
+      - name: Run linting (ruff check)
+        run: |
+          uv run ruff check moneyflow/ tests/
+
       - name: Run type checker (pyright)
         run: |
           uv run pyright moneyflow/
