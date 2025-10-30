@@ -76,7 +76,9 @@ class TestImportBasic:
         assert count == 3  # Cancelled order excluded
 
     @pytest.mark.asyncio
-    async def test_import_makes_categories_available(self, sample_orders_csv, temp_db, temp_config_dir):
+    async def test_import_makes_categories_available(
+        self, sample_orders_csv, temp_db, temp_config_dir
+    ):
         """Test that categories are available from backend after import."""
         backend = AmazonBackend(temp_db, config_dir=temp_config_dir)
 
