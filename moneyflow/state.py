@@ -222,6 +222,21 @@ class AppState:
         self.selected_ids.clear()
         self.selected_group_keys.clear()
 
+    def clear_drill_down_and_selection(self):
+        """
+        Clear all drill-down filters and selections.
+
+        This is a common operation when switching views or returning to top-level.
+        Clears:
+        - All drill-down filters (merchant, category, group, account)
+        - Multi-select state (transaction IDs and group keys)
+        """
+        self.selected_merchant = None
+        self.selected_category = None
+        self.selected_group = None
+        self.selected_account = None
+        self.clear_selection()
+
     def set_timeframe(
         self,
         timeframe: TimeFrame,
@@ -460,7 +475,8 @@ class AppState:
         Cycle through grouping modes.
 
         If drilled down: Cycle sub-groupings within current filter
-        If not drilled down: Cycle top-level aggregation views
+        If in top-level detail view: Go back to previous aggregate view (or MERCHANT)
+        If in aggregate view: Cycle top-level aggregation views
 
         When cycling views, if currently sorting by an aggregate field (MERCHANT,
         CATEGORY, GROUP, or ACCOUNT), the sort field is updated to match the new
@@ -476,9 +492,32 @@ class AppState:
         if self.is_drilled_down():
             return self.cycle_sub_grouping()
 
-        # Only cycle if in an aggregation view (not DETAIL)
+        # If in top-level detail view, go back to aggregate view (like Escape)
         if self.view_mode == ViewMode.DETAIL:
-            return ""
+            # Try to restore from navigation history first
+            if self.navigation_history:
+                nav_state = self.navigation_history.pop()
+                self.view_mode = nav_state.view_mode
+                self.sort_by = nav_state.sort_by
+                self.sort_direction = nav_state.sort_direction
+                # Restore any drill-down context from history
+                self.selected_merchant = nav_state.selected_merchant
+                self.selected_category = nav_state.selected_category
+                self.selected_group = nav_state.selected_group
+                self.selected_account = nav_state.selected_account
+                self.sub_grouping_mode = nav_state.sub_grouping_mode
+                # Return friendly name for the restored view
+                view_names = {
+                    ViewMode.MERCHANT: "Merchants",
+                    ViewMode.CATEGORY: "Categories",
+                    ViewMode.GROUP: "Groups",
+                    ViewMode.ACCOUNT: "Accounts",
+                }
+                return view_names.get(nav_state.view_mode, "")
+            else:
+                # No history - default to merchant view
+                self.view_mode = ViewMode.MERCHANT
+                return "Merchants"
 
         # Clear any drill-down selections when switching views
         self.selected_merchant = None
