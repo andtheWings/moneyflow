@@ -8,10 +8,10 @@ from different angles.
 ### Aggregate Views
 
 Press `g` to cycle through aggregate views. Aggregate views group your transactions by a specific field (merchant,
-category, group, or account) and display summary statistics for each group, including transaction count and total
+category, group, account, or time) and display summary statistics for each group, including transaction count and total
 amount spent.
 
-**Cycle Order**: Merchant → Category → Group → Account → Merchant...
+**Cycle Order**: Merchant → Category → Group → Account → Time → Merchant...
 
 <table>
 <tr>
@@ -36,6 +36,18 @@ alt="Categories view">
 <img src="https://raw.githubusercontent.com/wesm/moneyflow-assets/main/cycle-4-accounts.svg" width="100%" alt="Accounts view">
 </td>
 </tr>
+<tr>
+<td width="50%">
+<strong>TIME View (by Years)</strong><br>
+<img src="https://raw.githubusercontent.com/wesm/moneyflow-assets/main/cycle-5-time-years.svg" width="100%"
+alt="Time view by years">
+</td>
+<td width="50%">
+<strong>TIME View (by Months)</strong><br>
+<img src="https://raw.githubusercontent.com/wesm/moneyflow-assets/main/time-view-months.svg" width="100%"
+alt="Time view by months">
+</td>
+</tr>
 </table>
 
 | View | What It Shows | Use For |
@@ -44,6 +56,7 @@ alt="Categories view">
 | **Category** | Spending by category | Identify which categories consume your budget |
 | **Group** | Spending by category group | Monthly budget reviews, broad spending patterns |
 | **Account** | Spending by payment method | Reconciliation, per-account spending analysis |
+| **Time** | Spending by time period (years or months) | Analyze spending trends over time, year-over-year comparisons |
 
 **Columns displayed:**
 
@@ -134,7 +147,9 @@ This allows you to analyze the same transactions from multiple perspectives with
    - Shows Amazon spending grouped by category group
 4. **Press `g` again** - View changes to `Merchants > Amazon (by Account)`
    - Shows which payment methods you use at Amazon
-5. **Press `g` again** - Returns to detail view
+5. **Press `g` again** - View changes to `Merchants > Amazon (by Year)`
+   - Shows Amazon spending trends over time (press `t` to toggle to monthly)
+6. **Press `g` again** - Returns to detail view
    - Shows all Amazon transactions ungrouped
 
 ![Drilled into Merchant, grouped by Category](https://raw.githubusercontent.com/wesm/moneyflow-assets/main/merchants-drill-by-category.svg)
@@ -147,8 +162,11 @@ Sub-grouping helps answer analytical questions like:
 - "Which credit card do I use most at Starbucks?"
 - "What categories make up my Target spending?"
 
-When you're in a drilled-down view, pressing `g` cycles through the available sub-groupings. The field you're already
-filtered by is automatically excluded from the cycle to avoid redundancy.
+When you're in a drilled-down view, pressing `g` cycles through the available sub-groupings:
+
+**Sub-grouping cycle:** Category → Group → Account → Time → Detail → Category...
+
+The field you're already filtered by is automatically excluded from the cycle to avoid redundancy.
 
 ## Multi-Level Drill-Down
 
@@ -211,34 +229,94 @@ Control how rows are sorted in the current view.
 - **Aggregate Views**: Field name (e.g., Merchant, Category), Count (number of transactions), Amount (total spent)
 - **Detail Views**: Date, Merchant name, Category, Account, Amount
 
-## Time Navigation
+## Time as an Aggregate Dimension
 
-Filter your transactions to specific time periods for focused analysis.
+Time is a first-class aggregate dimension, just like Merchant, Category, Group, or Account. You can view spending
+grouped by time periods, drill into specific years or months, and combine time with other dimensions for powerful
+temporal analysis.
 
-**Quick time filters:**
+### TIME View
 
-- `t` - Filter to this month only
-- `y` - Filter to this year only
-- `a` - Show all time (remove time filter)
+Press `g` to cycle to the TIME view, which shows your transactions aggregated by time period. Toggle between year
+and month granularity to adjust the time grouping:
 
-**Navigate between periods:**
+- **Press `y`** - Switch to year granularity (view by years: 2023, 2024, 2025)
+- **Press `t`** - Switch to month granularity (view by months: Jan 2024, Feb 2024, ...)
 
-- `←` (Left arrow) - Move to the previous time period
-- `→` (Right arrow) - Move to the next time period
+**Example workflow:**
 
-The arrow keys intelligently navigate based on your current time filter. When viewing "This Month", arrows move to the
-previous or next month. When viewing "This Year", arrows move to the previous or next year. The breadcrumb displays
-your current time period.
+1. **Press `g` until you reach TIME view** - Shows all years in your dataset
+2. **Press `t`** - Toggle to monthly view - Shows all months with data
+3. **Press `Enter` on a specific period** - Drill into that time period
+4. **Press `g` to sub-group** - Pivot by Merchant/Category/etc within that period
 
-**Command-line time filters:**
+### Drilling Into Time Periods
 
-You can also specify time filters when launching moneyflow for faster startup with large transaction histories:
+From TIME view, press `Enter` on any year or month to drill down and see only transactions from that period.
+
+<table>
+<tr>
+<td width="50%">
+<strong>Drilled Into Year</strong><br>
+<img src="https://raw.githubusercontent.com/wesm/moneyflow-assets/main/time-drill-down-year.svg" width="100%"
+alt="Drilled into specific year">
+</td>
+<td width="50%">
+<strong>Drilled Into Month</strong><br>
+<img src="https://raw.githubusercontent.com/wesm/moneyflow-assets/main/time-drill-down-month.svg" width="100%"
+alt="Drilled into specific month">
+</td>
+</tr>
+</table>
+
+**Example:**
+
+1. **In TIME view** (showing years 2023, 2024, 2025)
+2. **Press `Enter` on 2024** → Breadcrumb shows `Time > 2024`
+3. **Press `g`** → View by Merchants within 2024
+4. **Press `g` again** → Cycle through Categories, Groups, Accounts, Time (by month)
+5. **Press `Escape`** → Back to `Time > 2024` (detail view)
+6. **Press `Escape`** → Back to TIME view (all years)
+
+### Time + Other Dimensions
+
+Combine time with other dimensions for multi-faceted analysis:
+
+**Time-first analysis** (`Time > 2024 > Merchants`):
+
+1. Drill into a year/month
+2. Sub-group by Merchant/Category/Account
+3. Analyze spending within that time period
+
+**Dimension-first with time sub-grouping** (`Merchants > Amazon > by Year`):
+
+1. Drill into a merchant/category
+2. Press `g` to sub-group by Year or Month
+3. See spending trends over time for that dimension
+
+### Navigate Between Time Periods
+
+When drilled into a specific time period, use arrow keys to navigate forward/backward:
+
+- **`←` (Left arrow)** - Previous period (e.g., from 2024 to 2023, or from Mar 2024 to Feb 2024)
+- **`→` (Right arrow)** - Next period (e.g., from 2024 to 2025, or from Mar 2024 to Apr 2024)
+- **`a`** - Clear time period selection (shortcut for Escape)
+
+Arrow keys only work when drilled into a time period. The navigation respects your current granularity (years vs months).
+
+### Command-Line Data Loading
+
+For Monarch Money and YNAB backends, you can fetch only recent data for faster startup:
 
 ```bash
-moneyflow --year 2025      # Load only 2025 transactions
-moneyflow --days 90        # Load last 90 days
-moneyflow --month 2025-03  # Load March 2025 only
+moneyflow --year 2025           # Fetch from 2025-01-01 onwards
+moneyflow --since 2024-06-01    # Fetch from specific date onwards
+moneyflow --mtd                 # Fetch month-to-date only
 ```
+
+!!! note "API Fetching vs View Filtering"
+    These flags control what data is **fetched from the API**, not what you see in the view.
+    Once data is loaded, all of it is visible by default. Use TIME view to analyze specific periods.
 
 ## Search
 
@@ -300,18 +378,34 @@ Here are some practical examples of using moneyflow's navigation features to ans
 3. **Sub-group by Category** - Press `g` until breadcrumb shows "(by Category)"
 4. **View breakdown** - See spending by category for this card
 
+### "How has my spending changed over time?"
+
+1. **Navigate to TIME view** - Press `g` until you see Years
+2. **Review annual totals** - See 2023: $45,000, 2024: $52,000, 2025: $48,000
+3. **Toggle to months** - Press `t` to see monthly breakdown
+4. **Drill into a month** - Press `Enter` on "Mar 2024" to see that month's transactions
+5. **Navigate months** - Use `←` `→` to move between months
+
+### "How has my Amazon spending trended?"
+
+1. **Navigate to Merchant view** - Press `g` until you see Merchants
+2. **Drill into Amazon** - Move cursor to "Amazon", press `Enter`
+3. **Sub-group by Year** - Press `g` until breadcrumb shows "(by Year)"
+4. **View year-over-year** - See 2023: $2,500, 2024: $3,200, 2025: $2,800
+5. **Toggle to months** - Press `t` to see monthly Amazon spending
+6. **Drill deeper** - Press `Enter` on a specific year to see all Amazon transactions from that year
+
 **Quick Analysis Tip:**
 
 - When drilled down, `g` becomes your pivot tool for viewing the same filtered data from different perspectives
 - No need to go back to the top-level view and re-filter
-- Combine drill-down with time navigation for powerful analysis: press `t` to filter to this month, drill down to
-  analyze current spending, then press `←` to compare with previous months
+- Time works symmetrically: drill into Time then pivot by dimension, OR drill into dimension then sub-group by time
 
 ## Quick Reference
 
 | Key | Action |
 |-----|--------|
-| `g` | Cycle aggregate views, or return to aggregate view from detail view |
+| `g` | Cycle aggregate views (includes TIME), or return to aggregate view from detail view |
 | `d` | Detail view (all transactions) |
 | `Enter` | Drill down |
 | `Escape` | Go back (or return to aggregate view from detail view) |
@@ -325,7 +419,8 @@ Here are some practical examples of using moneyflow's navigation features to ans
 | `x` | Delete selected transaction(s) |
 | `u` | Undo pending edit |
 | `w` | Commit pending edits |
-| `t` / `y` / `a` | Time filters |
-| `←` / `→` | Previous/next period |
+| `y` / `t` | Toggle time granularity (year/month) in TIME view |
+| `a` | Clear time period drill-down |
+| `←` / `→` | Navigate time periods (when drilled into time) |
 
 For the complete list of keyboard shortcuts, see [Keyboard Shortcuts](keyboard-shortcuts.md).

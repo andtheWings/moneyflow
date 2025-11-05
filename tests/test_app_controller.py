@@ -1069,14 +1069,22 @@ class TestViewModeSwitching:
         assert controller.state.sort_by == SortMode.ACCOUNT
 
     async def test_cycle_grouping_account_to_merchant_field_sort(self, controller, mock_view):
-        """Test ACCOUNT sort becomes MERCHANT sort when cycling back to merchant view."""
+        """Test cycling ACCOUNT → TIME → MERCHANT resets sort correctly for each view."""
         controller.state.view_mode = ViewMode.ACCOUNT
         controller.state.sort_by = SortMode.ACCOUNT
 
-        controller.cycle_grouping()  # Account → Merchant (wrap around)
+        controller.cycle_grouping()  # Account → TIME
+
+        assert controller.state.view_mode == ViewMode.TIME
+        assert controller.state.sort_by == SortMode.TIME_PERIOD
+        assert controller.state.sort_direction == SortDirection.ASC
+
+        controller.cycle_grouping()  # TIME → Merchant (wrap around)
 
         assert controller.state.view_mode == ViewMode.MERCHANT
-        assert controller.state.sort_by == SortMode.MERCHANT
+        # When leaving TIME, reset to AMOUNT DESC (highest spending first)
+        assert controller.state.sort_by == SortMode.AMOUNT
+        assert controller.state.sort_direction == SortDirection.DESC
 
     async def test_cycle_grouping_preserves_count_sort(self, controller, mock_view):
         """Test that COUNT sort is preserved when cycling views."""
@@ -1141,94 +1149,6 @@ class TestSortingFacade:
 
         assert controller.state.sort_direction == SortDirection.ASC
         assert direction_name == "Ascending"
-
-
-class TestTimeNavigationFacade:
-    """Test time navigation facade methods."""
-
-    async def test_set_timeframe_this_year(self, controller, mock_view):
-        """Test setting timeframe to this year."""
-        controller.set_timeframe_this_year()
-
-        # Verify dates are set (this year = Jan 1 to Dec 31 of current year)
-        assert controller.state.start_date is not None
-        assert controller.state.end_date is not None
-        assert controller.state.start_date.month == 1
-        assert controller.state.start_date.day == 1
-        assert controller.state.end_date.month == 12
-        assert controller.state.end_date.day == 31
-        assert len(mock_view.table_updates) == 1
-
-    async def test_set_timeframe_all_time(self, controller, mock_view):
-        """Test setting timeframe to all time."""
-        controller.set_timeframe_all_time()
-
-        # All-time has no date filters
-        assert controller.state.start_date is None
-        assert controller.state.end_date is None
-
-    async def test_set_timeframe_this_month(self, controller, mock_view):
-        """Test setting timeframe to this month."""
-        from datetime import date as date_type
-
-        today = date_type.today()
-        controller.set_timeframe_this_month()
-
-        # Verify it's current month
-        assert controller.state.start_date is not None
-        assert controller.state.start_date.month == today.month
-        assert controller.state.start_date.day == 1
-
-    async def test_select_month_returns_description(self, controller, mock_view):
-        """Test selecting a specific month."""
-        description = controller.select_month(3)  # March
-
-        assert "March" in description
-        assert len(mock_view.table_updates) == 1
-
-    async def test_navigate_prev_period_from_all_time(self, controller, mock_view):
-        """Test prev period from all-time view signals fallback."""
-        from moneyflow.state import TimeFrame
-
-        controller.state.set_timeframe(TimeFrame.ALL_TIME)
-        controller.state.start_date = None  # All-time has no start_date
-
-        should_fallback, description = controller.navigate_prev_period()
-
-        assert should_fallback is True
-        assert description is None
-
-    async def test_navigate_prev_period_from_month(self, controller, mock_view):
-        """Test navigating to previous period from a month."""
-        from datetime import date as date_type
-
-        from moneyflow.state import TimeFrame
-
-        # Set to March 2025
-        controller.state.set_timeframe(
-            TimeFrame.CUSTOM, start_date=date_type(2025, 3, 1), end_date=date_type(2025, 3, 31)
-        )
-
-        should_fallback, description = controller.navigate_prev_period()
-
-        assert should_fallback is False
-        assert "February" in description or "Feb" in description
-
-    async def test_navigate_next_period(self, controller, mock_view):
-        """Test navigating to next period."""
-        from datetime import date as date_type
-
-        from moneyflow.state import TimeFrame
-
-        # Set to March 2025
-        controller.state.set_timeframe(
-            TimeFrame.CUSTOM, start_date=date_type(2025, 3, 1), end_date=date_type(2025, 3, 31)
-        )
-
-        should_fallback, description = controller.navigate_next_period()
-
-        assert should_fallback is False
-        assert "April" in description or "Apr" in description
 
 
 class TestSortFieldValidation:
@@ -1498,6 +1418,42 @@ class TestSortFieldValidation:
         # Verify: DATE reset to AMOUNT in aggregate view
         assert controller.state.sort_by == SortMode.AMOUNT
         assert controller.state.sort_direction == SortDirection.DESC
+
+    async def test_time_period_sort_mapped_to_date_in_detail_view(self, controller, mock_view):
+        """TIME_PERIOD sort should be mapped to DATE when drilling down from TIME view."""
+        # Setup: Detail view (after drilling down from TIME view) with TIME_PERIOD sort
+        controller.state.view_mode = ViewMode.DETAIL
+        controller.state.selected_time_year = 2025
+        controller.state.selected_time_month = 1
+        controller.state.sort_by = SortMode.TIME_PERIOD  # Invalid for detail view
+        controller.state.sort_direction = SortDirection.ASC
+
+        # Refresh view - should map TIME_PERIOD to DATE
+        controller.refresh_view()
+
+        # Verify: Data is sorted by date (no error about missing 'time_period' column)
+        # The key assertion is that refresh_view doesn't raise an exception
+        # We can also verify the view was updated successfully
+        assert len(mock_view.table_updates) > 0
+
+    async def test_subgroup_by_time_within_merchant_drill_down(self, controller, mock_view):
+        """Sub-grouping by TIME within a merchant drill-down should work without errors."""
+        # Setup: Drill down into a merchant
+        controller.state.view_mode = ViewMode.DETAIL
+        controller.state.selected_merchant = "Starbucks"
+
+        # Then sub-group by TIME
+        controller.state.sub_grouping_mode = ViewMode.TIME
+        controller.state.time_granularity = (
+            controller.state.time_granularity
+        )  # Use current granularity
+
+        # Refresh view - should handle time_period_display field without errors
+        controller.refresh_view()
+
+        # Verify: No KeyError about 'time_period_display'
+        # The key assertion is that refresh_view doesn't raise an exception
+        assert len(mock_view.table_updates) > 0
 
 
 class TestMultiSelectGroups:

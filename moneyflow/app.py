@@ -58,7 +58,7 @@ from .screens.edit_screens import DeleteConfirmationScreen, EditMerchantScreen, 
 from .screens.review_screen import ReviewChangesScreen
 from .screens.search_screen import SearchScreen
 from .screens.transaction_detail_screen import TransactionDetailScreen
-from .state import AppState, ViewMode
+from .state import AppState, TimeGranularity, ViewMode
 from .textual_view import TextualViewPresenter
 from .widgets.help_screen import HelpScreen
 
@@ -118,10 +118,10 @@ class MoneyflowApp(App):
         # Note: 'm' conflicts with edit_merchant in detail view, so view_merchants removed
         # Note: 'c' removed - conflicts with commit confirmation in review screen
         Binding("A", "view_accounts", "Accounts", show=False, key_display="A"),
-        # Time navigation
-        Binding("y", "this_year", "Year", show=True),
-        Binding("t", "this_month", "Month", show=True),
-        Binding("a", "all_time", "All", show=True),
+        # Time granularity (only active in TIME view)
+        Binding("y", "toggle_year_granularity", "Year", show=False),
+        Binding("t", "toggle_month_granularity", "Month", show=False),
+        Binding("a", "clear_time_period", "Clear Time", show=False),
         # Sorting
         Binding("s", "toggle_sort_field", "Sort", show=True),
         Binding("v", "reverse_sort", "↕ Reverse", show=True),
@@ -193,7 +193,8 @@ class MoneyflowApp(App):
             # Backend provided externally (Amazon mode, etc.)
             pass
         elif demo_mode:
-            self.backend = DemoBackend(year=start_year or 2025)
+            # Default to 3 years of data (2023-2025) for showcasing multi-year TIME views
+            self.backend = DemoBackend(start_year=start_year or 2023, years=3)
             self.title = "moneyflow [DEMO MODE]"
         else:
             # Backend will be set in initialize_data() based on credentials
@@ -201,6 +202,7 @@ class MoneyflowApp(App):
 
         self.data_manager: Optional[DataManager] = None
         self.state = AppState()
+        # Demo mode shows all years of data (no time filtering by default)
         self.loading = False
         self.custom_start_date = custom_start_date
         self.stored_credentials: Optional[dict] = None
@@ -319,11 +321,9 @@ class MoneyflowApp(App):
         self.state.transactions_df = df
 
     def _initialize_view(self):
-        """Initialize time frame to THIS_YEAR and show initial view."""
-
-        today = date_type.today()
-        self.state.start_date = date_type(today.year, 1, 1)
-        self.state.end_date = date_type(today.year, 12, 31)
+        """Initialize view and show all data."""
+        # Show all data by default (start_date and end_date remain None)
+        # The --year and --since flags control API fetching, not view filtering
 
         # Show initial view (merchants)
         self.refresh_view()
@@ -979,20 +979,42 @@ class MoneyflowApp(App):
             )
 
     # Time navigation actions
-    def action_this_year(self) -> None:
-        """Switch to current year view."""
-        self.controller.set_timeframe_this_year()
-        self.notify("Viewing: This Year", timeout=1)
+    def action_toggle_year_granularity(self) -> None:
+        """Toggle to year granularity (in TIME view or when sub-grouping by time)."""
+        # Allow in TIME view or when sub-grouping by time
+        if not (
+            self.state.view_mode == ViewMode.TIME or self.state.sub_grouping_mode == ViewMode.TIME
+        ):
+            return  # Ignore if not in TIME context
 
-    def action_all_time(self) -> None:
-        """Switch to all time view."""
-        self.controller.set_timeframe_all_time()
-        self.notify("Viewing: All Time", timeout=1)
+        if self.state.time_granularity == TimeGranularity.YEAR:
+            return  # Already in year view
 
-    def action_this_month(self) -> None:
-        """Switch to current month view."""
-        self.controller.set_timeframe_this_month()
-        self.notify("Viewing: This Month", timeout=1)
+        view_name = self.controller.toggle_time_granularity()
+        self.notify(f"Switched to {view_name}", timeout=1)
+
+    def action_toggle_month_granularity(self) -> None:
+        """Toggle to month granularity (in TIME view or when sub-grouping by time)."""
+        # Allow in TIME view or when sub-grouping by time
+        if not (
+            self.state.view_mode == ViewMode.TIME or self.state.sub_grouping_mode == ViewMode.TIME
+        ):
+            return  # Ignore if not in TIME context
+
+        if self.state.time_granularity == TimeGranularity.MONTH:
+            return  # Already in month view
+
+        view_name = self.controller.toggle_time_granularity()
+        self.notify(f"Switched to {view_name}", timeout=1)
+
+    def action_clear_time_period(self) -> None:
+        """Clear time period selection (shortcut for Escape when drilled into time)."""
+        if not self.state.is_time_period_selected():
+            return  # Nothing to clear
+
+        self.state.clear_time_selection()
+        self.controller.refresh_view()
+        self.notify("Cleared time period filter", timeout=1)
 
     def _select_month(self, month: int, month_name: str) -> None:
         """Helper to select a specific month of the current year."""
@@ -1000,24 +1022,22 @@ class MoneyflowApp(App):
         self.notify(f"Viewing: {description}", timeout=1)
 
     def action_prev_period(self) -> None:
-        """Navigate to previous time period."""
-        should_fallback, description = self.controller.navigate_prev_period()
+        """Navigate to previous time period (only when drilled into time)."""
+        description = self.state.navigate_time_period(-1)
 
-        if should_fallback:
-            # In all-time view, go to current year
-            self.action_this_year()
-        else:
-            self.notify(f"Viewing: {description}", timeout=1)
+        if description:
+            self.controller.refresh_view()
+            self.notify(f"← {description}", timeout=1)
+        # Otherwise do nothing (not drilled into time)
 
     def action_next_period(self) -> None:
-        """Navigate to next time period."""
-        should_fallback, description = self.controller.navigate_next_period()
+        """Navigate to next time period (only when drilled into time)."""
+        description = self.state.navigate_time_period(1)
 
-        if should_fallback:
-            # In all-time view, go to current year
-            self.action_this_year()
-        else:
-            self.notify(f"Viewing: {description}", timeout=1)
+        if description:
+            self.controller.refresh_view()
+            self.notify(f"→ {description}", timeout=1)
+        # Otherwise do nothing (not drilled into time)
 
     def action_reverse_sort(self) -> None:
         """Reverse the current sort direction."""
@@ -1750,6 +1770,7 @@ class MoneyflowApp(App):
             ViewMode.CATEGORY,
             ViewMode.GROUP,
             ViewMode.ACCOUNT,
+            ViewMode.TIME,
         ]:
             # Drill down from top-level view - save cursor and scroll position for restoration on go_back
             from .logging_config import get_logger

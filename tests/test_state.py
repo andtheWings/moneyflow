@@ -11,7 +11,7 @@ from moneyflow.state import (
     NavigationState,
     SortDirection,
     SortMode,
-    TimeFrame,
+    TimeGranularity,
     ViewMode,
 )
 
@@ -24,38 +24,10 @@ class TestAppState:
         assert app_state.view_mode == ViewMode.MERCHANT
         assert app_state.sort_by == SortMode.AMOUNT
         assert app_state.sort_direction == SortDirection.DESC
-        assert app_state.time_frame == TimeFrame.THIS_YEAR
         assert app_state.transactions_df is None
         assert len(app_state.pending_edits) == 0
         assert len(app_state.selected_ids) == 0
         assert app_state.search_query == ""
-
-    def test_set_timeframe_this_year(self, app_state):
-        """Test setting timeframe to this year."""
-        app_state.set_timeframe(TimeFrame.THIS_YEAR)
-
-        assert app_state.time_frame == TimeFrame.THIS_YEAR
-        assert app_state.start_date == date(date.today().year, 1, 1)
-        assert app_state.end_date == date(date.today().year, 12, 31)
-
-    def test_set_timeframe_this_month(self, app_state):
-        """Test setting timeframe to this month."""
-        app_state.set_timeframe(TimeFrame.THIS_MONTH)
-
-        assert app_state.time_frame == TimeFrame.THIS_MONTH
-        assert app_state.start_date.month == date.today().month
-        assert app_state.start_date.day == 1
-
-    def test_set_timeframe_custom(self, app_state):
-        """Test setting custom timeframe."""
-        start = date(2024, 1, 1)
-        end = date(2024, 6, 30)
-
-        app_state.set_timeframe(TimeFrame.CUSTOM, start_date=start, end_date=end)
-
-        assert app_state.time_frame == TimeFrame.CUSTOM
-        assert app_state.start_date == start
-        assert app_state.end_date == end
 
     def test_toggle_sort(self, app_state):
         """Test sort field toggling."""
@@ -922,112 +894,19 @@ class TestBreadcrumbs:
 
         assert "Transactions" in breadcrumb
 
-    def test_breadcrumb_with_this_year_timeframe(self, app_state):
-        """Test breadcrumb includes year when in THIS_YEAR mode."""
+    def test_breadcrumb_with_date_filter(self, app_state):
+        """Test breadcrumb does NOT include date range when using date filters."""
         app_state.view_mode = ViewMode.MERCHANT
-        app_state.set_timeframe(TimeFrame.THIS_YEAR)
+        # Set date filters directly
+        current_year = date.today().year
+        app_state.start_date = date(current_year, 1, 1)
+        app_state.end_date = date(current_year, 12, 31)
 
         breadcrumb = app_state.get_breadcrumb()
 
-        assert "Year" in breadcrumb
-        assert str(date.today().year) in breadcrumb
-
-    def test_breadcrumb_with_this_month_timeframe(self, app_state):
-        """Test breadcrumb includes month when in THIS_MONTH mode."""
-        app_state.view_mode = ViewMode.MERCHANT
-        app_state.set_timeframe(TimeFrame.THIS_MONTH)
-
-        breadcrumb = app_state.get_breadcrumb()
-
-        # Should include month name
-        month_name = date.today().strftime("%B")
-        assert month_name in breadcrumb
-        assert str(date.today().year) in breadcrumb
-
-    def test_breadcrumb_with_custom_single_month(self, app_state):
-        """Test breadcrumb for custom timeframe spanning a single month."""
-        app_state.view_mode = ViewMode.MERCHANT
-        app_state.set_timeframe(
-            TimeFrame.CUSTOM, start_date=date(2024, 3, 1), end_date=date(2024, 3, 31)
-        )
-
-        breadcrumb = app_state.get_breadcrumb()
-
-        assert "March" in breadcrumb
-        assert "2024" in breadcrumb
-
-    def test_breadcrumb_with_custom_date_range(self, app_state):
-        """Test breadcrumb for custom timeframe spanning multiple months."""
-        app_state.view_mode = ViewMode.MERCHANT
-        app_state.set_timeframe(
-            TimeFrame.CUSTOM, start_date=date(2024, 1, 1), end_date=date(2024, 6, 30)
-        )
-
-        breadcrumb = app_state.get_breadcrumb()
-
-        assert "2024-01-01" in breadcrumb
-        assert "2024-06-30" in breadcrumb
-        assert "to" in breadcrumb
-
-
-class TestTimeFrameEdgeCases:
-    """Test edge cases in time frame handling."""
-
-    def test_set_timeframe_all_time(self, app_state):
-        """Test setting timeframe to ALL_TIME clears dates."""
-        # First set some dates
-        app_state.set_timeframe(
-            TimeFrame.CUSTOM, start_date=date(2024, 1, 1), end_date=date(2024, 12, 31)
-        )
-        assert app_state.start_date is not None
-        assert app_state.end_date is not None
-
-        # Now set to ALL_TIME
-        app_state.set_timeframe(TimeFrame.ALL_TIME)
-
-        assert app_state.time_frame == TimeFrame.ALL_TIME
-        assert app_state.start_date is None
-        assert app_state.end_date is None
-
-    def test_set_timeframe_this_month_december(self, app_state):
-        """Test setting timeframe to THIS_MONTH handles December correctly."""
-        # Mock today being in December - must mock in time_navigator module
-        from unittest.mock import patch
-
-        with patch("moneyflow.time_navigator.date") as mock_date:
-            mock_date.today.return_value = date(2024, 12, 15)
-            mock_date.side_effect = lambda *args, **kwargs: date(*args, **kwargs)
-
-            app_state.set_timeframe(TimeFrame.THIS_MONTH)
-
-            assert app_state.start_date == date(2024, 12, 1)
-            assert app_state.end_date == date(2024, 12, 31)
-
-    def test_set_timeframe_this_month_february_leap_year(self, app_state):
-        """Test THIS_MONTH handles February in a leap year."""
-        from unittest.mock import patch
-
-        with patch("moneyflow.time_navigator.date") as mock_date:
-            mock_date.today.return_value = date(2024, 2, 15)  # 2024 is leap year
-            mock_date.side_effect = lambda *args, **kwargs: date(*args, **kwargs)
-
-            app_state.set_timeframe(TimeFrame.THIS_MONTH)
-
-            assert app_state.start_date == date(2024, 2, 1)
-            assert app_state.end_date == date(2024, 2, 29)  # Leap year has 29 days
-
-    def test_set_timeframe_this_month_february_non_leap_year(self, app_state):
-        """Test THIS_MONTH handles February in a non-leap year."""
-        from unittest.mock import patch
-
-        with patch("moneyflow.time_navigator.date") as mock_date:
-            mock_date.today.return_value = date(2023, 2, 15)  # 2023 is not leap year
-            mock_date.side_effect = lambda *args, **kwargs: date(*args, **kwargs)
-
-            app_state.set_timeframe(TimeFrame.THIS_MONTH)
-
-            assert app_state.start_date == date(2023, 2, 1)
-            assert app_state.end_date == date(2023, 2, 28)  # Non-leap year has 28 days
+        # Time is only shown when drilled into via TIME view, not as a filter indicator
+        assert "Year" not in breadcrumb
+        assert breadcrumb == "Merchants"
 
 
 class TestSubGrouping:
@@ -1080,7 +959,7 @@ class TestSubGrouping:
         state.view_mode = ViewMode.DETAIL
         state.selected_merchant = "Amazon"
 
-        # Cycle: Category → Group → Account → Detail → Category
+        # Cycle: Category → Group → Account → TIME → Detail → Category
         assert state.cycle_sub_grouping() == "by Category"
         assert state.sub_grouping_mode == ViewMode.CATEGORY
 
@@ -1089,6 +968,9 @@ class TestSubGrouping:
 
         assert state.cycle_sub_grouping() == "by Account"
         assert state.sub_grouping_mode == ViewMode.ACCOUNT
+
+        assert state.cycle_sub_grouping() == "by Year"  # TIME now in cycle
+        assert state.sub_grouping_mode == ViewMode.TIME
 
         assert state.cycle_sub_grouping() == "Detail"
         assert state.sub_grouping_mode is None
@@ -1103,7 +985,7 @@ class TestSubGrouping:
         state.view_mode = ViewMode.DETAIL
         state.selected_category = "Groceries"
 
-        # Cycle: Merchant → Group → Account → Detail → Merchant
+        # Cycle: Merchant → Group → Account → TIME → Detail → Merchant
         assert state.cycle_sub_grouping() == "by Merchant"
         assert state.sub_grouping_mode == ViewMode.MERCHANT
 
@@ -1112,6 +994,9 @@ class TestSubGrouping:
 
         assert state.cycle_sub_grouping() == "by Account"
         assert state.sub_grouping_mode == ViewMode.ACCOUNT
+
+        assert state.cycle_sub_grouping() == "by Year"  # TIME now in cycle
+        assert state.sub_grouping_mode == ViewMode.TIME
 
         assert state.cycle_sub_grouping() == "Detail"
         assert state.sub_grouping_mode is None
@@ -1283,14 +1168,19 @@ class TestSubGrouping:
         state.sub_grouping_mode = ViewMode.ACCOUNT
         state.sort_by = SortMode.ACCOUNT  # Sorting by account
 
-        # Cycle through: Account → None(detail) → Merchant
-        state.cycle_sub_grouping()  # Account → None (detail)
+        # Cycle through: Account → TIME → None(detail) → Merchant
+        state.cycle_sub_grouping()  # Account → TIME
+        assert state.sub_grouping_mode == ViewMode.TIME
+        # ACCOUNT sort is not valid for TIME, should reset to TIME_PERIOD
+        assert state.sort_by == SortMode.TIME_PERIOD
+
+        state.cycle_sub_grouping()  # TIME → None (detail)
         assert state.sub_grouping_mode is None
-        # When we go to detail, account sort should be preserved (it's valid for detail)
-        assert state.sort_by == SortMode.ACCOUNT
+        # When we go to detail, TIME_PERIOD sort should be preserved (it's valid for detail)
+        assert state.sort_by == SortMode.TIME_PERIOD
 
         state.cycle_sub_grouping()  # None → Merchant
-        # ACCOUNT sort is not valid for merchant sub-grouping, should reset
+        # TIME_PERIOD sort is not valid for merchant sub-grouping, should reset
         assert state.sub_grouping_mode == ViewMode.MERCHANT
         assert state.sort_by == SortMode.AMOUNT
 
@@ -1493,38 +1383,40 @@ class TestSubGrouping:
         assert len(state.navigation_history) == 1  # Popped the sub-grouping entry
 
     def test_breadcrumb_shows_sub_grouping(self):
-        """Breadcrumb should show sub-grouping mode."""
+        """Breadcrumb should show sub-grouping mode but NOT date filter."""
         state = AppState()
         state.view_mode = ViewMode.DETAIL
         state.selected_merchant = "Amazon"
         state.sub_grouping_mode = ViewMode.CATEGORY
         state.start_date = date(2025, 1, 1)
         state.end_date = date(2025, 12, 31)
-        state.time_frame = TimeFrame.THIS_YEAR
 
         breadcrumb = state.get_breadcrumb()
 
         assert "Merchants" in breadcrumb
         assert "Amazon" in breadcrumb
         assert "(by Category)" in breadcrumb
-        assert "Year 2025" in breadcrumb
+        # Time is only shown when drilled into via TIME view, not as a filter indicator
+        assert "Year 2025" not in breadcrumb
+        assert breadcrumb == "Merchants > Amazon > (by Category)"
 
     def test_breadcrumb_multi_level_drill_down(self):
-        """Breadcrumb should show multiple drill-down levels."""
+        """Breadcrumb should show multiple drill-down levels but NOT date filter."""
         state = AppState()
         state.view_mode = ViewMode.DETAIL
         state.selected_merchant = "Amazon"
         state.selected_category = "Groceries"
         state.start_date = date(2025, 10, 1)
         state.end_date = date(2025, 10, 31)
-        state.time_frame = TimeFrame.THIS_MONTH
 
         breadcrumb = state.get_breadcrumb()
 
         assert "Merchants" in breadcrumb
         assert "Amazon" in breadcrumb
         assert "Groceries" in breadcrumb
-        assert "October 2025" in breadcrumb
+        # Time is only shown when drilled into via TIME view, not as a filter indicator
+        assert "October 2025" not in breadcrumb
+        assert breadcrumb == "Merchants > Amazon > Groceries"
 
     def test_multi_level_go_back_clears_deepest_first(self):
         """Multi-level drill-down should clear deepest selection first."""
@@ -1893,3 +1785,129 @@ class TestMultiLevelDrillDownNavigation:
         assert state.view_mode == ViewMode.GROUP
         assert state.selected_group is None
         assert state.sub_grouping_mode is None
+
+
+class TestTimeNavigation:
+    """Tests for time period navigation and granularity."""
+
+    def test_is_time_period_selected_when_year_set(self):
+        """Should return True when year is selected."""
+        state = AppState()
+        state.selected_time_year = 2024
+        assert state.is_time_period_selected() is True
+
+    def test_is_time_period_selected_when_not_set(self):
+        """Should return False when year is not selected."""
+        state = AppState()
+        assert state.is_time_period_selected() is False
+
+    def test_get_selected_time_period_year_only(self):
+        """Should return (year, None) when only year selected."""
+        state = AppState()
+        state.selected_time_year = 2024
+        assert state.get_selected_time_period() == (2024, None)
+
+    def test_get_selected_time_period_year_and_month(self):
+        """Should return (year, month) when both selected."""
+        state = AppState()
+        state.selected_time_year = 2024
+        state.selected_time_month = 3
+        assert state.get_selected_time_period() == (2024, 3)
+
+    def test_get_selected_time_period_none(self):
+        """Should return None when no time period selected."""
+        state = AppState()
+        assert state.get_selected_time_period() is None
+
+    def test_clear_time_selection(self):
+        """Should clear both year and month."""
+        state = AppState()
+        state.selected_time_year = 2024
+        state.selected_time_month = 6
+        state.clear_time_selection()
+        assert state.selected_time_year is None
+        assert state.selected_time_month is None
+
+    def test_toggle_time_granularity_year_to_month(self):
+        """Should toggle from YEAR to MONTH."""
+        state = AppState()
+        state.time_granularity = TimeGranularity.YEAR
+        result = state.toggle_time_granularity()
+        assert state.time_granularity == TimeGranularity.MONTH
+        assert result == "Months"
+
+    def test_toggle_time_granularity_month_to_year(self):
+        """Should toggle from MONTH to YEAR."""
+        state = AppState()
+        state.time_granularity = TimeGranularity.MONTH
+        result = state.toggle_time_granularity()
+        assert state.time_granularity == TimeGranularity.YEAR
+        assert result == "Years"
+
+    def test_navigate_time_period_next_year(self):
+        """Should navigate to next year."""
+        state = AppState()
+        state.selected_time_year = 2024
+        state.time_granularity = TimeGranularity.YEAR
+        result = state.navigate_time_period(1)
+        assert state.selected_time_year == 2025
+        assert result == "2025"
+
+    def test_navigate_time_period_prev_year(self):
+        """Should navigate to previous year."""
+        state = AppState()
+        state.selected_time_year = 2024
+        state.time_granularity = TimeGranularity.YEAR
+        result = state.navigate_time_period(-1)
+        assert state.selected_time_year == 2023
+        assert result == "2023"
+
+    def test_navigate_time_period_next_month(self):
+        """Should navigate to next month."""
+        state = AppState()
+        state.selected_time_year = 2024
+        state.selected_time_month = 3
+        state.time_granularity = TimeGranularity.MONTH
+        result = state.navigate_time_period(1)
+        assert state.selected_time_year == 2024
+        assert state.selected_time_month == 4
+        assert result == "Apr 2024"
+
+    def test_navigate_time_period_prev_month(self):
+        """Should navigate to previous month."""
+        state = AppState()
+        state.selected_time_year = 2024
+        state.selected_time_month = 3
+        state.time_granularity = TimeGranularity.MONTH
+        result = state.navigate_time_period(-1)
+        assert state.selected_time_year == 2024
+        assert state.selected_time_month == 2
+        assert result == "Feb 2024"
+
+    def test_navigate_time_period_month_wraps_to_next_year(self):
+        """Should wrap from December to January of next year."""
+        state = AppState()
+        state.selected_time_year = 2024
+        state.selected_time_month = 12
+        state.time_granularity = TimeGranularity.MONTH
+        result = state.navigate_time_period(1)
+        assert state.selected_time_year == 2025
+        assert state.selected_time_month == 1
+        assert result == "Jan 2025"
+
+    def test_navigate_time_period_month_wraps_to_prev_year(self):
+        """Should wrap from January to December of previous year."""
+        state = AppState()
+        state.selected_time_year = 2024
+        state.selected_time_month = 1
+        state.time_granularity = TimeGranularity.MONTH
+        result = state.navigate_time_period(-1)
+        assert state.selected_time_year == 2023
+        assert state.selected_time_month == 12
+        assert result == "Dec 2023"
+
+    def test_navigate_time_period_returns_none_when_not_selected(self):
+        """Should return None when no time period is selected."""
+        state = AppState()
+        result = state.navigate_time_period(1)
+        assert result is None

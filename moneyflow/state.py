@@ -14,8 +14,6 @@ from typing import Any, Dict, List, Optional
 
 import polars as pl
 
-from .time_navigator import TimeNavigator
-
 
 class ViewMode(Enum):
     """Available view modes for transaction aggregation."""
@@ -24,6 +22,7 @@ class ViewMode(Enum):
     CATEGORY = "category"
     GROUP = "group"
     ACCOUNT = "account"
+    TIME = "time"
     DETAIL = "detail"
 
 
@@ -37,6 +36,7 @@ class SortMode(Enum):
     CATEGORY = "category"
     GROUP = "group"
     ACCOUNT = "account"
+    TIME_PERIOD = "time_period"
 
 
 class SortDirection(Enum):
@@ -46,13 +46,11 @@ class SortDirection(Enum):
     ASC = "asc"
 
 
-class TimeFrame(Enum):
-    """Time frame for filtering transactions."""
+class TimeGranularity(Enum):
+    """Granularity for time-based aggregation."""
 
-    ALL_TIME = "all_time"
-    THIS_YEAR = "this_year"
-    THIS_MONTH = "this_month"
-    CUSTOM = "custom"
+    YEAR = "year"
+    MONTH = "month"
 
 
 @dataclass
@@ -75,7 +73,10 @@ class NavigationState:
     selected_category: Optional[str] = None
     selected_group: Optional[str] = None
     selected_account: Optional[str] = None
+    selected_time_year: Optional[int] = None
+    selected_time_month: Optional[int] = None
     sub_grouping_mode: Optional[ViewMode] = None
+    time_granularity: TimeGranularity = TimeGranularity.YEAR
 
 
 @dataclass
@@ -123,7 +124,6 @@ class AppState:
     view_mode: ViewMode = ViewMode.MERCHANT
     sort_by: SortMode = SortMode.AMOUNT  # What to sort by (count/amount/date)
     sort_direction: SortDirection = SortDirection.DESC  # Direction (asc/desc)
-    time_frame: TimeFrame = TimeFrame.THIS_YEAR
 
     # Time filtering
     start_date: Optional[date] = None
@@ -134,12 +134,17 @@ class AppState:
     selected_category: Optional[str] = None
     selected_group: Optional[str] = None
     selected_account: Optional[str] = None
+    selected_time_year: Optional[int] = None  # Drill-down: which year
+    selected_time_month: Optional[int] = None  # Drill-down: which month (1-12)
     selected_row: int = 0
 
     # Sub-grouping when drilled down (e.g., "Merchant > Amazon (by Category)")
     # When set, shows aggregated view of filtered data instead of detail view
-    # Cycles: Category → Group → Account → None (detail) → Category...
+    # Cycles: Category → Group → Account → Time → None (detail) → Category...
     sub_grouping_mode: Optional[ViewMode] = None
+
+    # Time dimension
+    time_granularity: TimeGranularity = TimeGranularity.YEAR
 
     # Multi-select for bulk operations
     selected_ids: set[str] = dataclass_field(default_factory=set)  # Transaction IDs in detail view
@@ -168,6 +173,9 @@ class AppState:
 
     # Current view data (for display)
     current_data: Optional[pl.DataFrame] = None
+    # Date range of current view data (for breadcrumb display)
+    current_data_start_date: Optional[date] = None
+    current_data_end_date: Optional[date] = None
 
     # Navigation history for breadcrumb and back navigation
     # Stores NavigationState objects for restoring state on go_back
@@ -228,56 +236,128 @@ class AppState:
 
         This is a common operation when switching views or returning to top-level.
         Clears:
-        - All drill-down filters (merchant, category, group, account)
+        - All drill-down filters (merchant, category, group, account, time)
         - Multi-select state (transaction IDs and group keys)
         """
         self.selected_merchant = None
         self.selected_category = None
         self.selected_group = None
         self.selected_account = None
+        self.selected_time_year = None
+        self.selected_time_month = None
         self.clear_selection()
 
-    def set_timeframe(
-        self,
-        timeframe: TimeFrame,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-    ) -> None:
-        """
-        Set the time frame for filtering transactions.
+    def is_time_period_selected(self) -> bool:
+        """Check if drilled into a specific time period."""
+        return self.selected_time_year is not None
 
-        Uses TimeNavigator for date calculations to avoid duplication
-        and ensure consistency with tested logic.
+    def get_selected_time_period(self) -> Optional[tuple[int, Optional[int]]]:
+        """
+        Get selected time period as (year, month) tuple.
+
+        Returns:
+            (year, month) if drilled into time, None otherwise.
+            month will be None if only year is selected.
+        """
+        if self.selected_time_year is None:
+            return None
+        return (self.selected_time_year, self.selected_time_month)
+
+    def clear_time_selection(self):
+        """Clear time period drill-down."""
+        self.selected_time_year = None
+        self.selected_time_month = None
+
+    def toggle_time_granularity(self) -> str:
+        """
+        Toggle between year and month granularity.
+
+        Returns:
+            Friendly name of new granularity ("Years" or "Months")
+        """
+        if self.time_granularity == TimeGranularity.YEAR:
+            self.time_granularity = TimeGranularity.MONTH
+            return "Months"
+        else:
+            self.time_granularity = TimeGranularity.YEAR
+            return "Years"
+
+    def navigate_time_period(self, direction: int) -> Optional[str]:
+        """
+        Navigate to adjacent time period (for arrow key navigation).
+
+        Only works when drilled into a specific time period. Navigates based
+        on current granularity:
+        - YEAR: Navigate between years
+        - MONTH: Navigate between months (wraps around year boundaries)
 
         Args:
-            timeframe: The time frame to set
-            start_date: Start date for CUSTOM timeframe
-            end_date: End date for CUSTOM timeframe
+            direction: -1 for previous period, +1 for next period
+
+        Returns:
+            Description of new period (e.g., "2024", "Mar 2024"), or None if
+            not drilled into a time period
 
         Examples:
             >>> state = AppState()
-            >>> state.set_timeframe(TimeFrame.THIS_YEAR)
-            >>> state.start_date.month == 1  # January
-            True
-            >>> state.end_date.month == 12  # December
-            True
-        """
-        self.time_frame = timeframe
+            >>> state.selected_time_year = 2024
+            >>> state.time_granularity = TimeGranularity.YEAR
+            >>> state.navigate_time_period(1)  # Next year
+            '2025'
+            >>> state.selected_time_year
+            2025
 
-        if timeframe == TimeFrame.CUSTOM:
-            self.start_date = start_date
-            self.end_date = end_date
-        elif timeframe == TimeFrame.THIS_YEAR:
-            date_range = TimeNavigator.get_current_year_range()
-            self.start_date = date_range.start_date
-            self.end_date = date_range.end_date
-        elif timeframe == TimeFrame.THIS_MONTH:
-            date_range = TimeNavigator.get_current_month_range()
-            self.start_date = date_range.start_date
-            self.end_date = date_range.end_date
-        else:  # ALL_TIME
-            self.start_date = None
-            self.end_date = None
+            >>> state.selected_time_year = 2024
+            >>> state.selected_time_month = 12
+            >>> state.time_granularity = TimeGranularity.MONTH
+            >>> state.navigate_time_period(1)  # Next month (wraps to next year)
+            'Jan 2025'
+        """
+        if not self.is_time_period_selected():
+            return None
+
+        # Type assertion: is_time_period_selected() ensures selected_time_year is not None
+        assert self.selected_time_year is not None
+
+        if self.time_granularity == TimeGranularity.YEAR:
+            # Navigate years
+            self.selected_time_year += direction
+            return str(self.selected_time_year)
+        else:  # MONTH
+            # Navigate months (handle year boundaries)
+            if self.selected_time_month is None:
+                # Shouldn't happen, but default to January if month not set
+                self.selected_time_month = 1
+
+            new_month = self.selected_time_month + direction
+
+            if new_month < 1:
+                # Wrap to previous year December
+                self.selected_time_year -= 1
+                self.selected_time_month = 12
+            elif new_month > 12:
+                # Wrap to next year January
+                self.selected_time_year += 1
+                self.selected_time_month = 1
+            else:
+                self.selected_time_month = new_month
+
+            # Format as "Mon YYYY"
+            month_names = [
+                "Jan",
+                "Feb",
+                "Mar",
+                "Apr",
+                "May",
+                "Jun",
+                "Jul",
+                "Aug",
+                "Sep",
+                "Oct",
+                "Nov",
+                "Dec",
+            ]
+            return f"{month_names[self.selected_time_month - 1]} {self.selected_time_year}"
 
     def reverse_sort(self):
         """Reverse the current sort direction."""
@@ -301,6 +381,7 @@ class AppState:
                 self.selected_category,
                 self.selected_group,
                 self.selected_account,
+                self.selected_time_year,
             ]
         )
 
@@ -351,7 +432,7 @@ class AppState:
         """
         Cycle through sub-grouping modes when drilled down.
 
-        Order: MERCHANT → CATEGORY → GROUP → ACCOUNT → None (detail) → MERCHANT
+        Order: MERCHANT → CATEGORY → GROUP → ACCOUNT → TIME → None (detail) → MERCHANT
 
         Skips the field we're already drilled into (e.g., if drilled into Category > Groceries,
         don't offer Category as sub-grouping since we're already filtered by that).
@@ -383,6 +464,8 @@ class AppState:
             available_modes.append(ViewMode.GROUP)
         if not self.selected_account:
             available_modes.append(ViewMode.ACCOUNT)
+        if not self.selected_time_year:
+            available_modes.append(ViewMode.TIME)
 
         # Add None for detail view
         available_modes.append(None)
@@ -428,6 +511,7 @@ class AppState:
             ViewMode.CATEGORY: SortMode.CATEGORY,
             ViewMode.GROUP: SortMode.GROUP,
             ViewMode.ACCOUNT: SortMode.ACCOUNT,
+            ViewMode.TIME: SortMode.TIME_PERIOD,
         }
 
         # Check if current sort is valid for the new mode
@@ -448,11 +532,16 @@ class AppState:
                 SortMode.CATEGORY,
                 SortMode.GROUP,
                 SortMode.ACCOUNT,
+                SortMode.TIME_PERIOD,
             ]:
                 # Aggregate field sort - only valid if it matches the new mode
                 if self.sort_by != mode_to_sort.get(new_mode):
                     # Current sort doesn't match new mode's field, fall back to AMOUNT
                     self.sort_by = SortMode.AMOUNT
+                    # For TIME mode, default to chronological ascending
+                    if new_mode == ViewMode.TIME:
+                        self.sort_by = SortMode.TIME_PERIOD
+                        self.sort_direction = SortDirection.ASC
 
         self.sub_grouping_mode = new_mode
 
@@ -467,6 +556,8 @@ class AppState:
             return "by Group"
         elif self.sub_grouping_mode == ViewMode.ACCOUNT:
             return "by Account"
+        elif self.sub_grouping_mode == ViewMode.TIME:
+            return "by Year" if self.time_granularity == TimeGranularity.YEAR else "by Month"
         else:
             return ""
 
@@ -512,6 +603,9 @@ class AppState:
                     ViewMode.CATEGORY: "Categories",
                     ViewMode.GROUP: "Groups",
                     ViewMode.ACCOUNT: "Accounts",
+                    ViewMode.TIME: "Years"
+                    if nav_state.time_granularity == TimeGranularity.YEAR
+                    else "Months",
                 }
                 return view_names.get(nav_state.view_mode, "")
             else:
@@ -524,10 +618,12 @@ class AppState:
         self.selected_category = None
         self.selected_group = None
         self.selected_account = None
+        self.selected_time_year = None
+        self.selected_time_month = None
         self.sub_grouping_mode = None  # Clear sub-grouping too
 
         # Reset sort to valid field for aggregate views if needed
-        # Now includes field-based sorting (MERCHANT, CATEGORY, GROUP, ACCOUNT)
+        # Now includes field-based sorting (MERCHANT, CATEGORY, GROUP, ACCOUNT, TIME_PERIOD)
         if self.sort_by not in [
             SortMode.COUNT,
             SortMode.AMOUNT,
@@ -535,6 +631,7 @@ class AppState:
             SortMode.CATEGORY,
             SortMode.GROUP,
             SortMode.ACCOUNT,
+            SortMode.TIME_PERIOD,
         ]:
             self.sort_by = SortMode.AMOUNT
 
@@ -545,9 +642,10 @@ class AppState:
             SortMode.CATEGORY,
             SortMode.GROUP,
             SortMode.ACCOUNT,
+            SortMode.TIME_PERIOD,
         ]
 
-        # Cycle through views and update sort field if needed
+        # Cycle through views and reset sort to appropriate default
         if self.view_mode == ViewMode.MERCHANT:
             self.view_mode = ViewMode.CATEGORY
             if is_sorting_by_aggregate_field:
@@ -564,9 +662,16 @@ class AppState:
                 self.sort_by = SortMode.ACCOUNT
             return "Accounts"
         elif self.view_mode == ViewMode.ACCOUNT:
+            self.view_mode = ViewMode.TIME
+            # TIME view always defaults to chronological order (period ASC)
+            self.sort_by = SortMode.TIME_PERIOD
+            self.sort_direction = SortDirection.ASC
+            return "Years" if self.time_granularity == TimeGranularity.YEAR else "Months"
+        elif self.view_mode == ViewMode.TIME:
             self.view_mode = ViewMode.MERCHANT
-            if is_sorting_by_aggregate_field:
-                self.sort_by = SortMode.MERCHANT
+            # When leaving TIME view, reset to default: highest spending first
+            self.sort_by = SortMode.AMOUNT
+            self.sort_direction = SortDirection.DESC
             return "Merchants"
 
         return ""
@@ -619,6 +724,13 @@ class AppState:
         if not self.show_hidden and self.view_mode != ViewMode.DETAIL:
             df = df.filter(~pl.col("hideFromReports"))
 
+        # Apply time period drill-down filter (can combine with other dimensions)
+        if self.selected_time_year is not None:
+            df = df.filter(pl.col("date").dt.year() == self.selected_time_year)
+
+            if self.selected_time_month is not None:
+                df = df.filter(pl.col("date").dt.month() == self.selected_time_month)
+
         # Apply view-specific filters
         if self.view_mode == ViewMode.DETAIL:
             if self.selected_merchant:
@@ -669,7 +781,10 @@ class AppState:
                 selected_category=self.selected_category,
                 selected_group=self.selected_group,
                 selected_account=self.selected_account,
+                selected_time_year=self.selected_time_year,
+                selected_time_month=self.selected_time_month,
                 sub_grouping_mode=self.sub_grouping_mode,
+                time_granularity=self.time_granularity,
             )
         )
 
@@ -692,6 +807,37 @@ class AppState:
             self.sub_grouping_mode = None
         elif effective_view_mode == ViewMode.ACCOUNT:
             self.selected_account = item_name
+            self.view_mode = ViewMode.DETAIL
+            self.sub_grouping_mode = None
+        elif effective_view_mode == ViewMode.TIME:
+            # Drilling into a time period (e.g., "2024" or "Mar 2024")
+            if self.time_granularity == TimeGranularity.YEAR:
+                # item_name is a year like "2024"
+                self.selected_time_year = int(item_name)
+                self.selected_time_month = None
+            else:  # MONTH
+                # item_name is like "Mar 2024"
+                parts = item_name.split()
+                month_name = parts[0]
+                year_str = parts[1]
+
+                month_names = [
+                    "Jan",
+                    "Feb",
+                    "Mar",
+                    "Apr",
+                    "May",
+                    "Jun",
+                    "Jul",
+                    "Aug",
+                    "Sep",
+                    "Oct",
+                    "Nov",
+                    "Dec",
+                ]
+                self.selected_time_year = int(year_str)
+                self.selected_time_month = month_names.index(month_name) + 1
+
             self.view_mode = ViewMode.DETAIL
             self.sub_grouping_mode = None
 
@@ -756,13 +902,16 @@ class AppState:
             self.selected_category = nav_state.selected_category
             self.selected_group = nav_state.selected_group
             self.selected_account = nav_state.selected_account
+            self.selected_time_year = nav_state.selected_time_year
+            self.selected_time_month = nav_state.selected_time_month
             self.sub_grouping_mode = nav_state.sub_grouping_mode
+            self.time_granularity = nav_state.time_granularity
             return True, nav_state.cursor_position, nav_state.scroll_y
 
         # No navigation history - we're at top level or not drilled down
-        # Fallback: clear filters one at a time
+        # Fallback: clear filters one at a time (innermost first)
         if self.view_mode == ViewMode.DETAIL:
-            # Clear deepest level first
+            # Clear deepest level first (non-time dimensions)
             if self.selected_account:
                 self.selected_account = None
             elif self.selected_group:
@@ -771,6 +920,12 @@ class AppState:
                 self.selected_category = None
             elif self.selected_merchant:
                 self.selected_merchant = None
+            elif self.selected_time_month:
+                # Clear month but keep year
+                self.selected_time_month = None
+            elif self.selected_time_year:
+                # Clear year (outermost time dimension)
+                self.selected_time_year = None
             else:
                 # No selections to clear, go to default view
                 self.view_mode = ViewMode.MERCHANT
@@ -793,7 +948,7 @@ class AppState:
         Saves everything that defines the current view including:
         - View mode and drill-down selections
         - Sort settings (column and direction)
-        - Time filtering (time_frame and date range)
+        - Time filtering (start_date and end_date)
         - Search query
         - Filter settings (show_transfers, show_hidden)
 
@@ -808,7 +963,6 @@ class AppState:
             "selected_account": self.selected_account,
             "sort_by": self.sort_by,
             "sort_direction": self.sort_direction,
-            "time_frame": self.time_frame,
             "start_date": self.start_date,
             "end_date": self.end_date,
             "search_query": self.search_query,
@@ -825,7 +979,6 @@ class AppState:
         self.selected_account = saved_state.get("selected_account")
         self.sort_by = saved_state.get("sort_by", self.sort_by)
         self.sort_direction = saved_state.get("sort_direction", self.sort_direction)
-        self.time_frame = saved_state.get("time_frame", self.time_frame)
         self.start_date = saved_state.get("start_date", self.start_date)
         self.end_date = saved_state.get("end_date", self.end_date)
         self.search_query = saved_state.get("search_query", self.search_query)
@@ -855,22 +1008,75 @@ class AppState:
 
         parts = []
 
+        # Helper to format date range suffix
+        def get_date_range_suffix() -> str:
+            """Get date range suffix if available and no time drill-down active."""
+            if (
+                self.current_data_start_date
+                and self.current_data_end_date
+                and self.selected_time_year is None
+            ):
+                return f" ({self.current_data_start_date} to {self.current_data_end_date})"
+            return ""
+
         # Add view mode
         if self.view_mode == ViewMode.MERCHANT:
-            parts.append(merchants_label)
+            parts.append(merchants_label + get_date_range_suffix())
         elif self.view_mode == ViewMode.CATEGORY:
-            parts.append("Categories")
+            parts.append("Categories" + get_date_range_suffix())
         elif self.view_mode == ViewMode.GROUP:
-            parts.append("Groups")
+            parts.append("Groups" + get_date_range_suffix())
         elif self.view_mode == ViewMode.ACCOUNT:
-            parts.append(accounts_label)
+            parts.append(accounts_label + get_date_range_suffix())
+        elif self.view_mode == ViewMode.TIME:
+            # TIME view - show granularity and date range if available
+            granularity_label = (
+                "Years" if self.time_granularity == TimeGranularity.YEAR else "Months"
+            )
+            if self.current_data_start_date and self.current_data_end_date:
+                # Show date range in ISO-8601 format
+                date_range = f"{self.current_data_start_date} to {self.current_data_end_date}"
+                parts.append(f"{granularity_label} ({date_range})")
+            else:
+                parts.append(granularity_label)
         elif self.view_mode == ViewMode.DETAIL:
-            # Show all drill-down levels (can have multiple selections for sub-grouping)
-            # Order: Merchant → Category → Group → Account
+            # Show all drill-down levels
+            # Order: Time (if set) → Merchant/Category/Group/Account
             has_any_selection = False
 
+            # Time period comes first if selected
+            if self.selected_time_year is not None:
+                parts.append("Time")
+                if self.selected_time_month is not None:
+                    # Format as "Mar 2024"
+                    month_names = [
+                        "Jan",
+                        "Feb",
+                        "Mar",
+                        "Apr",
+                        "May",
+                        "Jun",
+                        "Jul",
+                        "Aug",
+                        "Sep",
+                        "Oct",
+                        "Nov",
+                        "Dec",
+                    ]
+                    parts.append(
+                        f"{month_names[self.selected_time_month - 1]} {self.selected_time_year}"
+                    )
+                else:
+                    # Just year
+                    parts.append(str(self.selected_time_year))
+                has_any_selection = True
+
+            # Then other dimensions
             if self.selected_merchant:
-                parts.append(merchants_label)
+                if not has_any_selection:
+                    parts.append(merchants_label)
+                else:
+                    parts.append(merchants_label)
                 parts.append(self.selected_merchant)
                 has_any_selection = True
 
@@ -905,33 +1111,14 @@ class AppState:
                     parts.append("(by Group)")
                 elif self.sub_grouping_mode == ViewMode.ACCOUNT:
                     parts.append(f"(by {account_label})")
+                elif self.sub_grouping_mode == ViewMode.TIME:
+                    granularity = (
+                        "Year" if self.time_granularity == TimeGranularity.YEAR else "Month"
+                    )
+                    parts.append(f"(by {granularity})")
 
-        # Add time frame with actual dates
-        if self.time_frame == TimeFrame.THIS_YEAR and self.start_date:
-            parts.append(f"Year {self.start_date.year}")
-        elif self.time_frame == TimeFrame.THIS_MONTH and self.start_date:
-            month_name = self.start_date.strftime("%B")  # Full month name
-            year = self.start_date.year
-            parts.append(f"{month_name} {year}")
-        elif self.time_frame == TimeFrame.CUSTOM and self.start_date and self.end_date:
-            # Check if it's a single month
-            if (
-                self.start_date.year == self.end_date.year
-                and self.start_date.month == self.end_date.month
-            ):
-                month_name = self.start_date.strftime("%B")
-                parts.append(f"{month_name} {self.start_date.year}")
-            # Check if it's a full year (Jan 1 to Dec 31 of same year)
-            elif (
-                self.start_date.year == self.end_date.year
-                and self.start_date.month == 1
-                and self.start_date.day == 1
-                and self.end_date.month == 12
-                and self.end_date.day == 31
-            ):
-                parts.append(f"Year {self.start_date.year}")
-            else:
-                parts.append(f"{self.start_date} to {self.end_date}")
+        # Time is now shown via drill-down (Time > 2024), not as a filter indicator
+        # The old time_frame display logic has been removed
 
         # Add search indicator if active
         if self.search_query:

@@ -34,7 +34,7 @@ from .state import (
     NavigationState,
     SortDirection,
     SortMode,
-    TimeFrame,
+    TimeGranularity,
     TransactionEdit,
     ViewMode,
 )
@@ -188,6 +188,7 @@ class AppController:
             ViewMode.CATEGORY,
             ViewMode.GROUP,
             ViewMode.ACCOUNT,
+            ViewMode.TIME,
         ]
         is_sub_grouped = self.state.is_drilled_down() and self.state.sub_grouping_mode is not None
         is_detail_view = not is_aggregate_view and not is_sub_grouped
@@ -202,7 +203,13 @@ class AppController:
             self.state.sort_direction = SortDirection.DESC
 
         # Prepare view data based on current state
-        if self.state.view_mode in [
+        if self.state.view_mode == ViewMode.TIME:
+            # TIME view - special handling for time aggregation
+            view_data = self._prepare_time_aggregate_view()
+            if view_data is None:
+                return
+
+        elif self.state.view_mode in [
             ViewMode.MERCHANT,
             ViewMode.CATEGORY,
             ViewMode.GROUP,
@@ -237,20 +244,27 @@ class AppController:
             # Check if sub-grouping is active (drilled down with aggregation)
             if self.state.is_drilled_down() and self.state.sub_grouping_mode:
                 # Show aggregated view within drill-down
-                sub_group_map = {
-                    ViewMode.CATEGORY: (self.data_manager.aggregate_by_category, "category"),
-                    ViewMode.GROUP: (self.data_manager.aggregate_by_group, "group"),
-                    ViewMode.ACCOUNT: (self.data_manager.aggregate_by_account, "account"),
-                    ViewMode.MERCHANT: (self.data_manager.aggregate_by_merchant, "merchant"),
-                }
+                if self.state.sub_grouping_mode == ViewMode.TIME:
+                    # Special handling for time sub-grouping
+                    agg = self.data_manager.aggregate_by_time(txns, self.state.time_granularity)
+                    field_name = "time_period_display"  # Actual column name in time aggregation
+                else:
+                    sub_group_map = {
+                        ViewMode.CATEGORY: (self.data_manager.aggregate_by_category, "category"),
+                        ViewMode.GROUP: (self.data_manager.aggregate_by_group, "group"),
+                        ViewMode.ACCOUNT: (self.data_manager.aggregate_by_account, "account"),
+                        ViewMode.MERCHANT: (self.data_manager.aggregate_by_merchant, "merchant"),
+                    }
 
-                aggregate_func, field_name = sub_group_map[self.state.sub_grouping_mode]
-                agg = aggregate_func(txns)
+                    aggregate_func, field_name = sub_group_map[self.state.sub_grouping_mode]
+                    agg = aggregate_func(txns)
 
                 # Apply sorting with secondary sort key for deterministic ordering
                 sort_col = self.state.sort_by.value
                 if sort_col == "amount":
                     sort_col = "total"
+                elif sort_col == "time_period":
+                    sort_col = "time_period_display"
                 elif sort_col in ["merchant", "category", "group", "account"]:
                     sort_col = field_name
 
@@ -283,6 +297,9 @@ class AppController:
                 # Sort
                 if not txns.is_empty():
                     sort_field = self.state.sort_by.value
+                    # Map TIME_PERIOD to DATE for detail view (transactions don't have time_period column)
+                    if sort_field == "time_period":
+                        sort_field = "date"
                     descending = ViewPresenter.should_sort_descending(
                         sort_field, self.state.sort_direction
                     )
@@ -304,6 +321,20 @@ class AppController:
                 )
         else:
             return
+
+        # Update date range for breadcrumb display (compute from filtered data)
+        # Use transactions_df filtered by current timeframe for date range
+        filtered_df = self.state.get_filtered_df()
+        if filtered_df is not None and not filtered_df.is_empty() and "date" in filtered_df.columns:
+            # Get min/max dates as Python date objects
+            min_val = filtered_df["date"].min()
+            max_val = filtered_df["date"].max()
+            # Polars returns date objects directly for date columns
+            self.state.current_data_start_date = min_val if isinstance(min_val, date_type) else None
+            self.state.current_data_end_date = max_val if isinstance(max_val, date_type) else None
+        else:
+            self.state.current_data_start_date = None
+            self.state.current_data_end_date = None
 
         # Delegate rendering to view - it handles the details of clearing/rebuilding
         self.view.update_table(
@@ -411,6 +442,94 @@ class AppController:
             display_labels=self._get_display_labels(),
         )
 
+    def _prepare_time_aggregate_view(self):
+        """
+        Prepare TIME aggregation view (by year or month).
+
+        Returns:
+            dict: View data with columns and rows, or None if no data
+        """
+        filtered_df = self.state.get_filtered_df()
+        if filtered_df is None:
+            return None
+
+        # Aggregate by time with current granularity
+        agg = self.data_manager.aggregate_by_time(filtered_df, self.state.time_granularity)
+
+        # Apply sorting
+        sort_col = self.state.sort_by.value
+        if sort_col == "amount":
+            sort_col = "total"
+        elif sort_col == "time_period":
+            sort_col = "time_period_display"
+
+        descending = ViewPresenter.should_sort_descending(sort_col, self.state.sort_direction)
+        if not agg.is_empty():
+            agg = agg.sort(sort_col, descending=descending)
+
+        self.state.current_data = agg
+
+        # Prepare view - TIME view has special column handling (no Top Category)
+        # We'll need to add a new method or extend prepare_aggregation_view
+        # For now, let's use a simplified version
+        return self._prepare_time_view_data(agg)
+
+    def _prepare_time_view_data(self, agg: pl.DataFrame):
+        """
+        Prepare TIME view data with custom column handling.
+
+        TIME view shows: Period | Count | Total (no Top Category).
+
+        Args:
+            agg: Aggregated time DataFrame
+
+        Returns:
+            dict with columns and rows for view
+        """
+        # Build columns
+        columns = []
+
+        # Period column (with sort arrow)
+        period_label = "Period"
+        if self.state.sort_by == SortMode.TIME_PERIOD:
+            arrow = ViewPresenter.get_sort_arrow(
+                self.state.sort_by, self.state.sort_direction, SortMode.TIME_PERIOD
+            )
+            period_label = f"{period_label} {arrow}"
+        columns.append({"label": period_label, "key": "period", "width": None})
+
+        # Count column
+        count_label = "Count"
+        if self.state.sort_by == SortMode.COUNT:
+            arrow = ViewPresenter.get_sort_arrow(
+                self.state.sort_by, self.state.sort_direction, SortMode.COUNT
+            )
+            count_label = f"{count_label} {arrow}"
+        columns.append({"label": count_label, "key": "count", "width": 10})
+
+        # Total column (with currency symbol) - consistent with other aggregate views
+        currency_symbol = self._get_column_config().get("currency_symbol", "$")
+        arrow = ""
+        if self.state.sort_by == SortMode.AMOUNT:
+            arrow = " " + ViewPresenter.get_sort_arrow(
+                self.state.sort_by, self.state.sort_direction, SortMode.AMOUNT
+            )
+        total_label = f"Total ({currency_symbol}){arrow}"
+        columns.append({"label": total_label, "key": "total", "width": 15})
+
+        # Build rows
+        rows = []
+        for row_dict in agg.to_dicts():
+            year = row_dict["year"]
+            month = row_dict.get("month")
+            period_str = ViewPresenter.format_time_period(year, month, self.state.time_granularity)
+            count_str = str(row_dict["count"])
+            total_str = ViewPresenter.format_amount(row_dict["total"])
+
+            rows.append((period_str, count_str, total_str))
+
+        return {"columns": columns, "rows": rows, "empty": len(rows) == 0}
+
     # View mode switching operations
     def switch_to_merchant_view(self):
         """Switch to merchant aggregation view."""
@@ -445,6 +564,15 @@ class AppController:
             self.state.sort_by = SortMode.AMOUNT
         self.refresh_view()
 
+    def switch_to_time_view(self):
+        """Switch to time aggregation view."""
+        self.state.view_mode = ViewMode.TIME
+        self.state.clear_drill_down_and_selection()
+        # Default to chronological ascending for TIME view
+        self.state.sort_by = SortMode.TIME_PERIOD
+        self.state.sort_direction = SortDirection.ASC
+        self.refresh_view()
+
     def switch_to_detail_view(self, set_default_sort: bool = True):
         """
         Switch to transaction detail view (ungrouped).
@@ -462,6 +590,7 @@ class AppController:
             ViewMode.CATEGORY,
             ViewMode.GROUP,
             ViewMode.ACCOUNT,
+            ViewMode.TIME,
         ]:
             self.state.navigation_history.append(
                 NavigationState(
@@ -487,7 +616,7 @@ class AppController:
 
     def cycle_grouping(self) -> Optional[str]:
         """
-        Cycle through aggregation views (Merchant → Category → Group → Account).
+        Cycle through aggregation views (Merchant → Category → Group → Account → Time).
 
         Returns:
             View name if changed, None if at end of cycle
@@ -496,6 +625,17 @@ class AppController:
         if view_name:
             self.refresh_view()
         return view_name
+
+    def toggle_time_granularity(self) -> str:
+        """
+        Toggle between year and month granularity in TIME view.
+
+        Returns:
+            Name of new granularity ("Years" or "Months")
+        """
+        result = self.state.toggle_time_granularity()
+        self.refresh_view()
+        return result
 
     # Sorting operations
     def toggle_sort_field(self) -> str:
@@ -528,21 +668,6 @@ class AppController:
         return "Descending" if self.state.sort_direction == SortDirection.DESC else "Ascending"
 
     # Time navigation operations
-    def set_timeframe_this_year(self):
-        """Set view to current year."""
-        self.state.set_timeframe(TimeFrame.THIS_YEAR)
-        self.refresh_view()
-
-    def set_timeframe_all_time(self):
-        """Set view to all time."""
-        self.state.set_timeframe(TimeFrame.ALL_TIME)
-        self.refresh_view()
-
-    def set_timeframe_this_month(self):
-        """Set view to current month."""
-        self.state.set_timeframe(TimeFrame.THIS_MONTH)
-        self.refresh_view()
-
     def select_month(self, month: int) -> str:
         """
         Select a specific month of the current year.
@@ -556,9 +681,8 @@ class AppController:
         today = date_type.today()
         date_range = TimeNavigator.get_month_range(today.year, month)
 
-        self.state.set_timeframe(
-            TimeFrame.CUSTOM, start_date=date_range.start_date, end_date=date_range.end_date
-        )
+        self.state.start_date = date_range.start_date
+        self.state.end_date = date_range.end_date
         self.refresh_view()
         return date_range.description
 
@@ -576,9 +700,8 @@ class AppController:
             return (True, None)
 
         date_range = TimeNavigator.previous_period(self.state.start_date, self.state.end_date)
-        self.state.set_timeframe(
-            TimeFrame.CUSTOM, start_date=date_range.start_date, end_date=date_range.end_date
-        )
+        self.state.start_date = date_range.start_date
+        self.state.end_date = date_range.end_date
         self.refresh_view()
         return (False, date_range.description)
 
@@ -596,9 +719,8 @@ class AppController:
             return (True, None)
 
         date_range = TimeNavigator.next_period(self.state.start_date, self.state.end_date)
-        self.state.set_timeframe(
-            TimeFrame.CUSTOM, start_date=date_range.start_date, end_date=date_range.end_date
-        )
+        self.state.start_date = date_range.start_date
+        self.state.end_date = date_range.end_date
         self.refresh_view()
         return (False, date_range.description)
 
@@ -855,6 +977,14 @@ class AppController:
                 return (SortMode.AMOUNT, "Amount")
             else:  # AMOUNT or anything else
                 return (SortMode.DATE, "Date")
+        elif view_mode == ViewMode.TIME:
+            # TIME view cycles: Time Period → Count → Amount → Time Period
+            if current_sort == SortMode.TIME_PERIOD:
+                return (SortMode.COUNT, "Count")
+            elif current_sort == SortMode.COUNT:
+                return (SortMode.AMOUNT, "Amount")
+            else:  # AMOUNT or anything else
+                return (SortMode.TIME_PERIOD, "Time Period")
         else:
             # Aggregate views cycle: Field name → Count → Amount → Field name
             # Map view mode to its field SortMode
@@ -879,7 +1009,14 @@ class AppController:
         """Get action hints text based on current view mode."""
         sort_name = self.state.sort_by.value.capitalize()
 
-        if self.state.view_mode == ViewMode.MERCHANT:
+        if self.state.view_mode == ViewMode.TIME:
+            # TIME view - show granularity toggle
+            granularity = "year" if self.state.time_granularity == TimeGranularity.YEAR else "month"
+            toggle_key = "t" if granularity == "year" else "y"
+            toggle_to = "Month" if granularity == "year" else "Year"
+
+            return f"Enter=Drill | {toggle_key}={toggle_to} | s=Sort({sort_name}) | g=Group"
+        elif self.state.view_mode == ViewMode.MERCHANT:
             return f"Enter=Drill | Space=Select | m=✏️ Merchant (bulk) | c=✏️ Category (bulk) | s=Sort({sort_name}) | g=Group"
         elif self.state.view_mode in [ViewMode.CATEGORY, ViewMode.GROUP]:
             return f"Enter=Drill | Space=Select | m=✏️ Merchant (bulk) | c=✏️ Category (bulk) | s=Sort({sort_name}) | g=Group"
