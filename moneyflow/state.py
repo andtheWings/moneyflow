@@ -844,11 +844,18 @@ class AppState:
 
             self.view_mode = ViewMode.DETAIL
             self.sub_grouping_mode = None
+            # When drilling into time period, sort by amount DESC to show biggest expenses first
+            self.sort_by = SortMode.AMOUNT
+            self.sort_direction = SortDirection.DESC
 
         # Reset sort to valid field for detail view if needed
-        # Detail views don't have 'count' column, so switch to date-based sorting
+        # Detail views don't have 'count' or 'time_period' columns
         if self.sort_by == SortMode.COUNT:
             self.sort_by = SortMode.DATE
+            self.sort_direction = SortDirection.DESC
+        elif self.sort_by == SortMode.TIME_PERIOD:
+            # TIME_PERIOD not valid for detail view
+            self.sort_by = SortMode.AMOUNT
             self.sort_direction = SortDirection.DESC
 
     def go_back(self) -> tuple[bool, int, float]:
