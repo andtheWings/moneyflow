@@ -525,8 +525,9 @@ class AppState:
                 # Always valid
                 pass
             elif self.sort_by == SortMode.DATE:
-                # DATE is not valid for aggregate views
+                # DATE is not valid for aggregate views, fall back to AMOUNT DESC
                 self.sort_by = SortMode.AMOUNT
+                self.sort_direction = SortDirection.DESC
             elif self.sort_by in [
                 SortMode.MERCHANT,
                 SortMode.CATEGORY,
@@ -536,12 +537,15 @@ class AppState:
             ]:
                 # Aggregate field sort - only valid if it matches the new mode
                 if self.sort_by != mode_to_sort.get(new_mode):
-                    # Current sort doesn't match new mode's field, fall back to AMOUNT
-                    self.sort_by = SortMode.AMOUNT
+                    # Current sort doesn't match new mode's field
                     # For TIME mode, default to chronological ascending
                     if new_mode == ViewMode.TIME:
                         self.sort_by = SortMode.TIME_PERIOD
                         self.sort_direction = SortDirection.ASC
+                    else:
+                        # For non-TIME modes, fall back to AMOUNT DESC (highest spending first)
+                        self.sort_by = SortMode.AMOUNT
+                        self.sort_direction = SortDirection.DESC
 
         self.sub_grouping_mode = new_mode
 

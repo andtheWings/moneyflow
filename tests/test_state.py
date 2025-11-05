@@ -1073,7 +1073,7 @@ class TestSubGrouping:
         assert result == "Merchants"
 
     def test_cycle_sub_grouping_resets_date_sort_to_amount(self):
-        """When cycling from detail to aggregated sub-grouping, should reset DATE sort to AMOUNT."""
+        """When cycling from detail to aggregated sub-grouping, should reset DATE sort to AMOUNT DESC."""
         state = AppState()
         state.view_mode = ViewMode.DETAIL
         state.selected_category = "Coffee Shops"
@@ -1083,9 +1083,10 @@ class TestSubGrouping:
         # Cycle to aggregated sub-grouping
         result = state.cycle_sub_grouping()
 
-        # Should switch to aggregated view and reset sort from DATE to AMOUNT
+        # Should switch to aggregated view and reset sort from DATE to AMOUNT DESC (highest spending first)
         assert state.sub_grouping_mode == ViewMode.MERCHANT
         assert state.sort_by == SortMode.AMOUNT
+        assert state.sort_direction == SortDirection.DESC
         assert result == "by Merchant"
 
     def test_cycle_sub_grouping_preserves_count_sort(self):
@@ -1135,7 +1136,7 @@ class TestSubGrouping:
         assert state.sort_by == SortMode.AMOUNT  # MERCHANT is not valid for group sub-grouping
 
     def test_cycle_sub_grouping_resets_merchant_sort_when_switching_to_category(self):
-        """MERCHANT sort should reset to AMOUNT when cycling to category sub-grouping."""
+        """MERCHANT sort should reset to AMOUNT DESC when cycling to category sub-grouping."""
         state = AppState()
         state.view_mode = ViewMode.DETAIL
         state.selected_account = "Chase Checking"
@@ -1146,6 +1147,7 @@ class TestSubGrouping:
 
         assert state.sub_grouping_mode == ViewMode.CATEGORY
         assert state.sort_by == SortMode.AMOUNT
+        assert state.sort_direction == SortDirection.DESC
 
     def test_cycle_sub_grouping_resets_category_sort_when_switching_to_merchant(self):
         """CATEGORY sort should reset to AMOUNT when cycling to merchant sub-grouping."""
