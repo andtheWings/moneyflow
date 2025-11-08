@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from moneyflow.app import MoneyflowApp
 from moneyflow.backends import DemoBackend
+from moneyflow.screens.account_selector_screen import AccountSelectorScreen
 from moneyflow.screens.credential_screens import BackendSelectionScreen
 
 
@@ -82,6 +83,8 @@ class ScreenshotGenerator:
 
         # Credential setup screens (no backend needed)
         # These require a fresh config directory (no existing credentials)
+        if matches_filter("account-selector"):
+            await self.screenshot_account_selector()
         if matches_filter("backend-select"):
             await self.screenshot_backend_select()
         if matches_filter("monarch-credentials"):
@@ -141,13 +144,49 @@ class ScreenshotGenerator:
         if self.convert_to_png:
             self.convert_svgs_to_png()
 
+    async def screenshot_account_selector(self):
+        """Screenshot: Account selector screen with multiple accounts."""
+        filename = "account-selector"
+        print(f"  📸 {filename}.svg - Account selector screen")
+
+        # Create some mock accounts first
+        from moneyflow.account_manager import AccountManager
+        from pathlib import Path
+
+        config_dir = Path(self.temp_config_dir) / ".moneyflow"
+        account_mgr = AccountManager(config_dir=config_dir)
+
+        # Create demo accounts to show in selector
+        account_mgr.create_account("Personal Monarch", "monarch", account_id="monarch1")
+        account_mgr.create_account("Business YNAB", "ynab", account_id="ynab1")
+        account_mgr.create_account("Amazon", "amazon", account_id="amazon")
+
+        class AccountSelectorApp(MoneyflowApp):
+            """Minimal app that shows account selector."""
+
+            async def on_mount(self):
+                """Show account selector on mount."""
+                await self.push_screen(AccountSelectorScreen(config_dir=str(config_dir)))
+
+        app = AccountSelectorApp()
+        async with app.run_test(size=(150, 40)) as pilot:
+            await pilot.pause(0.3)
+            await self._save_screenshot(pilot, filename)
+
     async def screenshot_backend_select(self):
         """Screenshot: Backend selection screen."""
         filename = "backend-select"
         print(f"  📸 {filename}.svg - Backend selection screen")
 
-        class BackendSelectApp(MoneyflowApp):
+        from textual.app import App
+
+        # Use minimal App instead of MoneyflowApp to avoid account selector
+        class BackendSelectApp(App):
             """Minimal app that shows backend selection."""
+
+            def compose(self):
+                """Don't compose anything - just show the screen."""
+                return []
 
             async def on_mount(self):
                 """Show backend selection on mount."""
@@ -163,18 +202,24 @@ class ScreenshotGenerator:
         filename = "monarch-credentials"
         print(f"  📸 {filename}.svg - Monarch credential setup")
 
-        class CredentialSetupApp(MoneyflowApp):
-            """Minimal app that shows backend selection then credential setup."""
+        from textual.app import App
+
+        from moneyflow.screens.credential_screens import CredentialSetupScreen
+
+        # Use minimal App to avoid account selector
+        class CredentialSetupApp(App):
+            """Minimal app that shows credential setup."""
+
+            def compose(self):
+                """Don't compose anything - just show the screen."""
+                return []
 
             async def on_mount(self):
-                """Show backend selection on mount."""
-                await self.push_screen(BackendSelectionScreen())
+                """Show credential setup on mount."""
+                await self.push_screen(CredentialSetupScreen(backend_type="monarch"))
 
         app = CredentialSetupApp()
         async with app.run_test(size=(150, 50)) as pilot:
-            await pilot.pause(0.3)
-            # Click the Monarch Money button to navigate to credential setup
-            await pilot.click("#monarch-button")
             await pilot.pause(0.3)
             await self._save_screenshot(pilot, filename)
 
@@ -183,18 +228,24 @@ class ScreenshotGenerator:
         filename = "ynab-credentials"
         print(f"  📸 {filename}.svg - YNAB credential setup")
 
-        class CredentialSetupApp(MoneyflowApp):
-            """Minimal app that shows backend selection then credential setup."""
+        from textual.app import App
+
+        from moneyflow.screens.credential_screens import CredentialSetupScreen
+
+        # Use minimal App to avoid account selector
+        class CredentialSetupApp(App):
+            """Minimal app that shows credential setup."""
+
+            def compose(self):
+                """Don't compose anything - just show the screen."""
+                return []
 
             async def on_mount(self):
-                """Show backend selection on mount."""
-                await self.push_screen(BackendSelectionScreen())
+                """Show credential setup on mount."""
+                await self.push_screen(CredentialSetupScreen(backend_type="ynab"))
 
         app = CredentialSetupApp()
         async with app.run_test(size=(150, 50)) as pilot:
-            await pilot.pause(0.3)
-            # Click the YNAB button to navigate to credential setup
-            await pilot.click("#ynab-button")
             await pilot.pause(0.3)
             await self._save_screenshot(pilot, filename)
 
