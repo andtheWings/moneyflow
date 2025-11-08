@@ -107,11 +107,16 @@ def amazon(ctx, db_path, config_dir):
         from moneyflow.app import launch_amazon_mode
         from moneyflow.backends.amazon import AmazonBackend
 
+        # Ensure config_dir has a value
+        if config_dir is None:
+            config_dir = str(Path.home() / ".moneyflow")
+
         # Determine the correct db_path
         # Priority: 1) explicit --db-path, 2) migrated profile, 3) legacy location
+        amazon_profile_dir = None
         if db_path is None:
             # Check if Amazon account exists in profiles
-            config_path = Path(config_dir) if config_dir else Path.home() / ".moneyflow"
+            config_path = Path(config_dir)
             account_manager = AccountManager(config_dir=config_path)
             accounts = account_manager.list_accounts()
 
@@ -124,11 +129,13 @@ def amazon(ctx, db_path, config_dir):
 
             if amazon_account:
                 # Use migrated profile path
-                profile_dir = account_manager.get_profile_dir(amazon_account.id)
-                db_path = str(profile_dir / "amazon.db")
+                amazon_profile_dir = account_manager.get_profile_dir(amazon_account.id)
+                db_path = str(amazon_profile_dir / "amazon.db")
             # else: db_path stays None, AmazonBackend will use default
 
-        backend = AmazonBackend(db_path=db_path, config_dir=config_dir)
+        backend = AmazonBackend(
+            db_path=db_path, config_dir=config_dir, profile_dir=amazon_profile_dir
+        )
 
         # Check if database exists
         if not backend.db_path.exists():
@@ -148,7 +155,7 @@ def amazon(ctx, db_path, config_dir):
             raise click.Abort()
 
         # Launch the UI
-        launch_amazon_mode(db_path=db_path, config_dir=config_dir)
+        launch_amazon_mode(db_path=db_path, config_dir=config_dir, profile_dir=amazon_profile_dir)
 
 
 @amazon.command(name="import")

@@ -42,7 +42,11 @@ from .credentials import CredentialManager
 from .data_manager import DataManager
 from .duplicate_detector import DuplicateDetector
 from .logging_config import get_logger, setup_logging
-from .migration import migrate_legacy_amazon_db, migrate_legacy_credentials
+from .migration import (
+    migrate_global_categories_to_profiles,
+    migrate_legacy_amazon_db,
+    migrate_legacy_credentials,
+)
 from .notification_helper import NotificationHelper
 from .retry_logic import RetryAborted, retry_with_backoff
 
@@ -178,6 +182,8 @@ class MoneyflowApp(App):
         backend: Optional[Any] = None,
         config: Optional[Any] = None,
         config_dir: Optional[str] = None,
+        profile_dir: Optional[Path] = None,
+        backend_type: Optional[str] = None,
     ):
         super().__init__()
         self.demo_mode = demo_mode
@@ -205,6 +211,10 @@ class MoneyflowApp(App):
 
         self.data_manager: Optional[DataManager] = None
         self.state = AppState()
+
+        # Store profile_dir and backend_type for pre-configured backends (e.g., Amazon via CLI)
+        self._preconfigured_profile_dir = profile_dir
+        self._preconfigured_backend_type = backend_type
         # Demo mode shows all years of data (no time filtering by default)
         self.loading = False
         self.custom_start_date = custom_start_date
@@ -274,7 +284,9 @@ class MoneyflowApp(App):
         loading_status.display = True
         return loading_status
 
-    def _initialize_managers(self, profile_dir: Optional[Path] = None):
+    def _initialize_managers(
+        self, profile_dir: Optional[Path] = None, backend_type: Optional[str] = None
+    ):
         """
         Initialize data manager, cache manager, and controller.
 
@@ -282,6 +294,7 @@ class MoneyflowApp(App):
             profile_dir: Optional profile directory for multi-account mode
                         If provided, merchant cache and transaction cache will be
                         stored in this directory to isolate accounts
+            backend_type: Backend type (amazon, monarch, ynab) for category logic
         """
         # config_dir is required - default to ~/.moneyflow if not specified
         config_dir = self.config_dir if self.config_dir else str(Path.home() / ".moneyflow")
@@ -298,7 +311,11 @@ class MoneyflowApp(App):
             merchant_cache_dir = ""
 
         self.data_manager = DataManager(
-            self.backend, config_dir=config_dir, merchant_cache_dir=merchant_cache_dir
+            self.backend,
+            config_dir=config_dir,
+            merchant_cache_dir=merchant_cache_dir,
+            profile_dir=profile_dir,
+            backend_type=backend_type,
         )
 
         # Initialize cache manager
@@ -433,6 +450,11 @@ class MoneyflowApp(App):
         amazon_migrated = migrate_legacy_amazon_db(config_dir=config_path)
         if amazon_migrated:
             logger.info("Migrated legacy Amazon database to amazon profile")
+
+        # Migrate global config.yaml categories to profile-local configs
+        categories_migrated = migrate_global_categories_to_profiles(config_dir=config_path)
+        if categories_migrated:
+            logger.info("Migrated global categories to profile-local configs")
 
         account_manager = AccountManager(config_dir=config_path)
 
@@ -917,7 +939,8 @@ class MoneyflowApp(App):
                 loading_status.update("🎮 DEMO MODE - Loading sample data...")
             elif self.backend is not None:
                 # Backend pre-configured (e.g., Amazon mode via CLI)
-                # Use legacy credential handling
+                # Use preconfigured profile_dir if available
+                profile_dir = self._preconfigured_profile_dir
                 account_id = None  # No account tracking for pre-configured backends
                 if self.backend_config.requires_auth:
                     creds = await self._handle_credentials()
@@ -952,7 +975,9 @@ class MoneyflowApp(App):
                         from moneyflow.backends.amazon import AmazonBackend
 
                         db_path = str(profile_dir / "amazon.db")
-                        self.backend = AmazonBackend(db_path=db_path, config_dir=self.config_dir)
+                        self.backend = AmazonBackend(
+                            db_path=db_path, config_dir=self.config_dir, profile_dir=profile_dir
+                        )
                         self.backend_config = BackendConfig.for_amazon()
                         loading_status.update("📦 Loading Amazon data...")
 
@@ -989,7 +1014,29 @@ class MoneyflowApp(App):
                     await self.backend.login()  # No-op for backends without auth
 
             # Step 4: Initialize managers (pass profile_dir for multi-account isolation)
-            self._initialize_managers(profile_dir=profile_dir)
+            # Determine backend_type for category loading
+            # Use preconfigured values if backend was set externally (e.g., Amazon via CLI)
+            determined_backend_type = self._preconfigured_backend_type
+            determined_profile_dir = self._preconfigured_profile_dir or profile_dir
+
+            if not determined_backend_type:
+                if self.demo_mode:
+                    determined_backend_type = "demo"
+                elif self.backend:
+                    # Get backend type from backend instance
+                    backend_class = self.backend.__class__.__name__
+                    if "Amazon" in backend_class:
+                        determined_backend_type = "amazon"
+                    elif "Monarch" in backend_class:
+                        determined_backend_type = "monarch"
+                    elif "YNAB" in backend_class:
+                        determined_backend_type = "ynab"
+                elif creds:
+                    determined_backend_type = creds.get("backend_type")
+
+            self._initialize_managers(
+                profile_dir=determined_profile_dir, backend_type=determined_backend_type
+            )
 
             # Step 4: Determine date range
             start_date, end_date, self.cache_year_filter, self.cache_since_filter = (
@@ -2165,13 +2212,18 @@ def launch_monarch_mode(
         sys.exit(1)
 
 
-def launch_amazon_mode(db_path: Optional[str] = None, config_dir: Optional[str] = None) -> None:
+def launch_amazon_mode(
+    db_path: Optional[str] = None,
+    config_dir: Optional[str] = None,
+    profile_dir: Optional[Path] = None,
+) -> None:
     """
     Launch moneyflow in Amazon purchase analysis mode.
 
     Args:
         db_path: Path to Amazon SQLite database (default: ~/.moneyflow/amazon.db)
         config_dir: Config directory for loading categories (default: ~/.moneyflow)
+        profile_dir: Profile directory for category inheritance (optional)
 
     Uses the AmazonBackend with data stored in SQLite.
     Data must be imported first using: moneyflow amazon import <csv>
@@ -2184,10 +2236,12 @@ def launch_amazon_mode(db_path: Optional[str] = None, config_dir: Optional[str] 
     logger.info("Starting moneyflow in Amazon mode")
     if config_dir:
         logger.info(f"Using custom config directory: {config_dir}")
+    if profile_dir:
+        logger.info(f"Using profile directory: {profile_dir}")
 
     try:
         # Create Amazon backend and config
-        backend = AmazonBackend(db_path=db_path, config_dir=config_dir)
+        backend = AmazonBackend(db_path=db_path, config_dir=config_dir, profile_dir=profile_dir)
         config = BackendConfig.for_amazon()
 
         # Create MoneyflowApp in Amazon mode
@@ -2195,6 +2249,8 @@ def launch_amazon_mode(db_path: Optional[str] = None, config_dir: Optional[str] 
             demo_mode=False,
             backend=backend,
             config=config,
+            profile_dir=profile_dir,
+            backend_type="amazon",
         )
         app.title = "moneyflow [Amazon]"
 
