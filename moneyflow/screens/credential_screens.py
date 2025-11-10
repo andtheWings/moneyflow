@@ -7,13 +7,13 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.events import Key
-from textual.screen import ModalScreen, Screen
+from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Static
 
 from ..credentials import CredentialManager
 
 
-class BackendSelectionScreen(Screen):
+class BackendSelectionScreen(ModalScreen):
     """
     Backend selection screen for first-time setup.
 
@@ -168,7 +168,7 @@ class BackendSelectionScreen(Screen):
             pass
 
 
-class CredentialSetupScreen(Screen):
+class CredentialSetupScreen(ModalScreen):
     """First-time credential setup screen."""
 
     CSS = """
@@ -388,7 +388,7 @@ class CredentialSetupScreen(Screen):
             error_label.update(f"❌ Error saving credentials: {e}")
 
 
-class CredentialUnlockScreen(Screen):
+class CredentialUnlockScreen(ModalScreen):
     """Screen to unlock encrypted credentials."""
 
     def __init__(self, profile_dir: Optional[Path] = None):
