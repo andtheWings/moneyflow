@@ -14,7 +14,7 @@ direct control over their financial data.
 
 **Supported Platforms:**
 
-- ✅ **Monarch Money** - Full integration with editing and sync
+- ✅ **[Monarch Money](https://monarchmoney.sjv.io/3JGDYA)** - Full integration with editing and sync
 - ✅ **YNAB** - Full integration with editing and sync
 - ✅ **Amazon Purchases** - Import and analyze purchase history
 - ✅ **Demo Mode** - Try it without an account

@@ -117,7 +117,7 @@ Manage multiple accounts (Monarch, YNAB, Amazon) and switch between them seamles
 
 **Currently supported:**
 
-- **[Monarch Money](https://www.monarchmoney.com/)** - Full-featured integration with real-time sync
+- **[Monarch Money](https://monarchmoney.sjv.io/3JGDYA)** - Full-featured integration with real-time sync
 - **[YNAB (You Need A Budget)](https://www.ynab.com/)** - Full-featured integration with real-time sync
 - **[Amazon Purchase History](guide/amazon-mode.md)** - Import and analyze your Amazon order history from official
   data exports
