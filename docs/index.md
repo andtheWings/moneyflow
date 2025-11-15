@@ -19,8 +19,10 @@ uvx moneyflow
 uvx moneyflow --demo  # Try with demo data
 ```
 
-Track spending, bulk edit transactions, and navigate your financial data at lightning speed. Supports personal finance
-platforms like Monarch Money or even analyzing your Amazon purchase history.
+Track spending, bulk edit transactions, and navigate your financial
+data at lightning speed. Supports personal finance platforms like
+[Monarch Money](https://monarchmoney.sjv.io/3JGDYA), YNAB, or even
+analyzing your Amazon purchase history.
 
 <div class="quick-links" markdown>
 [Get Started](getting-started/installation.md){ .md-button .md-button--primary }
