@@ -59,7 +59,7 @@ extra_javascript:
   - javascripts/lightbox.js
 
 extra:
-  version: "0.7.3"
+  version: "0.7.4"
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/wesm/moneyflow
