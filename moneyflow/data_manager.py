@@ -17,7 +17,7 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import polars as pl
 
@@ -724,6 +724,7 @@ class DataManager:
             top_cats = top_cats.with_columns(
                 ((pl.col("top_cat_activity") / pl.col("total_activity")) * 100)
                 .round(0)
+                .fill_nan(0)
                 .cast(pl.Int32)
                 .alias("top_category_pct")
             ).select(["merchant", "top_category", "top_category_pct"])
@@ -1053,7 +1054,63 @@ class DataManager:
             | pl.col("notes").str.to_lowercase().str.contains(query_lower)
         )
 
-    async def commit_pending_edits(self, edits: List[Any]) -> Tuple[int, int]:
+    async def check_batch_scope(self, edits: List[Any]) -> Dict[Tuple[str, str], Dict[str, int]]:
+        """
+        Check if any merchant renames would affect more transactions than selected.
+
+        This is used to prompt the user before committing, so they can choose
+        between batch rename (affects all transactions) or individual updates
+        (affects only selected transactions).
+
+        Only applicable for backends that support batch_update_merchant (e.g., YNAB).
+
+        Args:
+            edits: List of TransactionEdit objects to check
+
+        Returns:
+            Dict mapping (old_merchant, new_merchant) to counts:
+            {"selected": count_in_queue, "total": count_on_backend}
+
+            Empty dict if backend doesn't support this check or no mismatches found.
+
+        Example:
+            >>> mismatches = await dm.check_batch_scope(edits)
+            >>> for (old, new), counts in mismatches.items():
+            ...     print(f"'{old}' -> '{new}': {counts['selected']} selected, "
+            ...           f"{counts['total']} total on backend")
+        """
+        # Only supported for backends with get_transaction_count_by_merchant
+        if not hasattr(self.mm, "get_transaction_count_by_merchant"):
+            return {}
+
+        # Filter to merchant edits only
+        merchant_edits = [e for e in edits if e.field == "merchant"]
+        if not merchant_edits:
+            return {}
+
+        # Group by (old_value, new_value)
+        groups: Dict[Tuple[str, str], List[Any]] = {}
+        for edit in merchant_edits:
+            key = (edit.old_value, edit.new_value)
+            groups.setdefault(key, []).append(edit)
+
+        result: Dict[Tuple[str, str], Dict[str, int]] = {}
+        for (old_name, new_name), group_edits in groups.items():
+            # Call backend to get total count
+            total = await asyncio.to_thread(self.mm.get_transaction_count_by_merchant, old_name)
+
+            # Only report if backend returned a count and it's more than selected
+            if total is not None and total > len(group_edits):
+                result[(old_name, new_name)] = {
+                    "selected": len(group_edits),
+                    "total": total,
+                }
+
+        return result
+
+    async def commit_pending_edits(
+        self, edits: List[Any], skip_batch_for: Optional[Set[Tuple[str, str]]] = None
+    ) -> Tuple[int, int, Set[Tuple[str, str]]]:
         """
         Commit pending edits to backend API in parallel.
 
@@ -1069,18 +1126,25 @@ class DataManager:
 
         Args:
             edits: List of TransactionEdit objects to commit
+            skip_batch_for: Optional set of (old_merchant, new_merchant) tuples
+                to process individually instead of using batch update. Used when
+                user chooses "rename selected only" for renames that would affect
+                more transactions than selected.
 
         Returns:
-            Tuple of (success_count, failure_count)
+            Tuple of (success_count, failure_count, bulk_merchant_renames)
             - success_count: Number of successful API updates
             - failure_count: Number of failed API updates
+            - bulk_merchant_renames: Set of (old_merchant, new_merchant) tuples
+              that were batch-updated. Pass this to CommitOrchestrator to
+              ensure all matching transactions are updated locally.
 
         Example:
             >>> edits = [
             ...     TransactionEdit("txn1", "merchant", "Old", "New", ...),
             ...     TransactionEdit("txn2", "category", "cat1", "cat2", ...)
             ... ]
-            >>> success, failure = await dm.commit_pending_edits(edits)
+            >>> success, failure, bulk_renames = await dm.commit_pending_edits(edits)
             >>> print(f"Committed {success} edits, {failure} failed")
 
         Note: After successful commit, caller should use CommitOrchestrator
@@ -1090,11 +1154,12 @@ class DataManager:
 
         if not edits:
             logger.info("No edits to commit")
-            return 0, 0
+            return 0, 0, set()
 
         success_count = 0
         failure_count = 0
         auth_errors = []
+        bulk_merchant_renames: Set[Tuple[str, str]] = set()
 
         # Check if backend supports batch merchant updates
         has_batch_update = hasattr(self.mm, "batch_update_merchant")
@@ -1126,7 +1191,19 @@ class DataManager:
             # they'll be in different batch groups. We can only batch one of them.
             processed_txn_ids = set()
 
+            # Initialize skip_batch_for if not provided
+            skip_batch_set = skip_batch_for or set()
+
             for (old_name, new_name), group_edits in merchant_groups.items():
+                # Check if user chose to skip batch for this rename
+                if (old_name, new_name) in skip_batch_set:
+                    logger.info(
+                        f"User chose individual updates for '{old_name}' -> '{new_name}' "
+                        f"({len(group_edits)} transactions)"
+                    )
+                    failed_batch_edits.extend(group_edits)
+                    continue
+
                 # Filter out edits for transactions already processed in a different batch
                 unprocessed_edits = [
                     e for e in group_edits if e.transaction_id not in processed_txn_ids
@@ -1158,6 +1235,8 @@ class DataManager:
                         processed_txn_ids.update(group_txn_ids)
                         success_count += len(group_edits)
                         successfully_batched_edits.extend(group_edits)
+                        # Track this as a bulk rename for local cache update
+                        bulk_merchant_renames.add((old_name, new_name))
                         logger.info(
                             f"✓ Batch update succeeded for '{old_name}' -> '{new_name}' "
                             f"({len(group_edits)} transactions updated via 1 API call)"
@@ -1248,7 +1327,7 @@ class DataManager:
             logger.warning("All failures were auth errors - raising to trigger retry")
             raise auth_errors[0]  # Raise first auth error to trigger retry
 
-        return success_count, failure_count
+        return success_count, failure_count, bulk_merchant_renames
 
     def get_stats(self) -> Dict[str, Any]:
         """Get statistics about current data."""
