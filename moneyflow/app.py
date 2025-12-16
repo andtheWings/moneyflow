@@ -389,6 +389,22 @@ class MoneyflowApp(App):
 
         return start_date, end_date, cache_year_filter, cache_since_filter
 
+    @staticmethod
+    def _filter_df_by_start_date(df: pl.DataFrame, start_date: str) -> pl.DataFrame:
+        """Filter DataFrame to only include transactions on or after start_date.
+
+        Used to filter cached data when --mtd or --since is specified, since the cache
+        may contain more data than requested (e.g., full year cache for MTD request).
+
+        Args:
+            df: Transaction DataFrame with a 'date' column
+            start_date: Start date string in YYYY-MM-DD format
+
+        Returns:
+            Filtered DataFrame with only transactions >= start_date
+        """
+        return df.filter(pl.col("date") >= pl.lit(start_date).str.to_date())
+
     def _store_data(self, df, categories, category_groups):
         """Store data in data manager and state."""
         self.data_manager.df = df
@@ -1171,6 +1187,15 @@ class MoneyflowApp(App):
 
             if cached_data:
                 df, categories, category_groups = cached_data
+                # Filter cached data to match requested date range (e.g., --mtd)
+                # Cache may contain more data than requested (e.g., full year cache for MTD request)
+                if start_date:
+                    original_count = len(df)
+                    df = self._filter_df_by_start_date(df, start_date)
+                    if len(df) < original_count:
+                        loading_status.update(
+                            f"📦 Filtered cache: {len(df):,} of {original_count:,} transactions"
+                        )
             else:
                 # Step 6: Fetch from API with retry logic
                 fetch_result = await self._fetch_data_with_retry(

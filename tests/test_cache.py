@@ -988,3 +988,183 @@ class TestEdgeCases:
         # Empty string is treated as no filter (all data)
         assert cache_manager.is_cache_valid(since="")
         assert cache_manager.is_cache_valid(since=None)  # Cache covers all data
+
+
+class TestCacheDataFiltering:
+    """Test filtering cached data by date range (for --mtd, --since flags)."""
+
+    def test_filter_by_start_date_basic(self):
+        """Test basic filtering of cached data by start date."""
+        from moneyflow.app import MoneyflowApp
+
+        # Create DataFrame with transactions across multiple months
+        df = pl.DataFrame(
+            {
+                "id": ["tx1", "tx2", "tx3", "tx4", "tx5"],
+                "date": [
+                    datetime(2025, 1, 15),
+                    datetime(2025, 2, 10),
+                    datetime(2025, 3, 5),
+                    datetime(2025, 12, 1),
+                    datetime(2025, 12, 15),
+                ],
+                "merchant": ["Store A", "Store B", "Store C", "Store D", "Store E"],
+                "amount": [-10.0, -20.0, -30.0, -40.0, -50.0],
+            }
+        )
+
+        # Filter to December only (simulating --mtd in December)
+        filtered = MoneyflowApp._filter_df_by_start_date(df, "2025-12-01")
+
+        assert len(filtered) == 2
+        assert filtered["id"].to_list() == ["tx4", "tx5"]
+
+    def test_filter_by_start_date_includes_boundary(self):
+        """Test that filtering includes transactions on the start date."""
+        from moneyflow.app import MoneyflowApp
+
+        df = pl.DataFrame(
+            {
+                "id": ["tx1", "tx2", "tx3"],
+                "date": [
+                    datetime(2025, 12, 1),
+                    datetime(2025, 12, 1),  # Same date, should be included
+                    datetime(2025, 12, 2),
+                ],
+                "merchant": ["Store A", "Store B", "Store C"],
+                "amount": [-10.0, -20.0, -30.0],
+            }
+        )
+
+        filtered = MoneyflowApp._filter_df_by_start_date(df, "2025-12-01")
+
+        assert len(filtered) == 3
+        assert filtered["id"].to_list() == ["tx1", "tx2", "tx3"]
+
+    def test_filter_by_start_date_excludes_earlier(self):
+        """Test that filtering excludes transactions before start date."""
+        from moneyflow.app import MoneyflowApp
+
+        df = pl.DataFrame(
+            {
+                "id": ["tx1", "tx2", "tx3"],
+                "date": [
+                    datetime(2025, 11, 30),  # Day before, excluded
+                    datetime(2025, 12, 1),  # Included
+                    datetime(2025, 12, 2),  # Included
+                ],
+                "merchant": ["Store A", "Store B", "Store C"],
+                "amount": [-10.0, -20.0, -30.0],
+            }
+        )
+
+        filtered = MoneyflowApp._filter_df_by_start_date(df, "2025-12-01")
+
+        assert len(filtered) == 2
+        assert "tx1" not in filtered["id"].to_list()
+
+    def test_filter_by_start_date_empty_result(self):
+        """Test filtering when all transactions are before start date."""
+        from moneyflow.app import MoneyflowApp
+
+        df = pl.DataFrame(
+            {
+                "id": ["tx1", "tx2"],
+                "date": [datetime(2025, 1, 1), datetime(2025, 6, 15)],
+                "merchant": ["Store A", "Store B"],
+                "amount": [-10.0, -20.0],
+            }
+        )
+
+        filtered = MoneyflowApp._filter_df_by_start_date(df, "2025-12-01")
+
+        assert len(filtered) == 0
+
+    def test_filter_by_start_date_all_included(self):
+        """Test filtering when all transactions are after start date."""
+        from moneyflow.app import MoneyflowApp
+
+        df = pl.DataFrame(
+            {
+                "id": ["tx1", "tx2", "tx3"],
+                "date": [
+                    datetime(2025, 12, 5),
+                    datetime(2025, 12, 10),
+                    datetime(2025, 12, 15),
+                ],
+                "merchant": ["Store A", "Store B", "Store C"],
+                "amount": [-10.0, -20.0, -30.0],
+            }
+        )
+
+        filtered = MoneyflowApp._filter_df_by_start_date(df, "2025-12-01")
+
+        assert len(filtered) == 3
+
+    def test_filter_preserves_all_columns(self):
+        """Test that filtering preserves all DataFrame columns."""
+        from moneyflow.app import MoneyflowApp
+
+        df = pl.DataFrame(
+            {
+                "id": ["tx1", "tx2"],
+                "date": [datetime(2025, 11, 15), datetime(2025, 12, 15)],
+                "merchant": ["Store A", "Store B"],
+                "amount": [-10.0, -20.0],
+                "category": ["Food", "Shopping"],
+                "notes": ["Note 1", "Note 2"],
+            }
+        )
+
+        filtered = MoneyflowApp._filter_df_by_start_date(df, "2025-12-01")
+
+        assert filtered.columns == df.columns
+        assert len(filtered) == 1
+        assert filtered["merchant"][0] == "Store B"
+        assert filtered["category"][0] == "Shopping"
+        assert filtered["notes"][0] == "Note 2"
+
+    def test_filter_with_string_dates(self):
+        """Test filtering works with string date column (pre-parsed)."""
+        from moneyflow.app import MoneyflowApp
+
+        # Some DataFrames may have date as string
+        df = pl.DataFrame(
+            {
+                "id": ["tx1", "tx2", "tx3"],
+                "date": ["2025-11-30", "2025-12-01", "2025-12-15"],
+                "merchant": ["Store A", "Store B", "Store C"],
+                "amount": [-10.0, -20.0, -30.0],
+            }
+        ).with_columns(pl.col("date").str.to_date())
+
+        filtered = MoneyflowApp._filter_df_by_start_date(df, "2025-12-01")
+
+        assert len(filtered) == 2
+
+    def test_filter_mtd_scenario(self):
+        """Test realistic MTD filtering scenario with full year of data."""
+        from moneyflow.app import MoneyflowApp
+
+        # Simulate cached full year data
+        dates = []
+        ids = []
+        for month in range(1, 13):
+            for day in [1, 15]:
+                dates.append(datetime(2025, month, day))
+                ids.append(f"tx_{month}_{day}")
+
+        df = pl.DataFrame(
+            {
+                "id": ids,
+                "date": dates,
+                "merchant": [f"Store {i}" for i in range(len(ids))],
+                "amount": [-10.0] * len(ids),
+            }
+        )
+
+        # Filter to December (MTD scenario)
+        filtered = MoneyflowApp._filter_df_by_start_date(df, "2025-12-01")
+
+        assert len(filtered) == 2  # Dec 1 and Dec 15
+        assert all(d.month == 12 for d in filtered["date"].to_list())
