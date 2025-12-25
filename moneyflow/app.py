@@ -23,7 +23,6 @@ import argparse
 import sys
 import traceback
 from datetime import date as date_type
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -38,7 +37,8 @@ from .account_manager import Account, AccountManager
 from .app_controller import AppController
 from .backend_config import get_backend_config
 from .backends import DemoBackend, get_backend
-from .cache_manager import CacheManager
+from .cache_manager import CacheManager, RefreshStrategy
+from .cache_orchestrator import CacheOrchestrator
 from .credentials import CredentialManager
 from .data_manager import DataManager
 from .duplicate_detector import DuplicateDetector
@@ -243,8 +243,10 @@ class MoneyflowApp(App):
         self.cache_path = cache_path
         self.force_refresh = force_refresh
         self.cache_manager = None  # Will be set if caching is enabled
+        self.cache_orchestrator = None  # Coordinates cache refresh/load behavior
         self.cache_year_filter = None  # Track what filters the cache uses
         self.cache_since_filter = None
+        self.display_start_date = None  # Display filter (--mtd/--since) separate from cache
         self.config_dir = config_dir  # Custom config directory (None = default ~/.moneyflow)
         self.encryption_key: Optional[bytes] = None  # Encryption key for cache (set after login)
         # Controller will be initialized after data_manager is ready
@@ -359,6 +361,11 @@ class MoneyflowApp(App):
             self.cache_manager = CacheManager(
                 cache_dir=cache_dir, encryption_key=self.encryption_key
             )
+            self.cache_orchestrator = CacheOrchestrator(
+                self.cache_manager, self.data_manager, notify=self.notify
+            )
+        else:
+            self.cache_orchestrator = None
 
         # Initialize controller with view presenter pattern
         view = TextualViewPresenter(self)
@@ -367,27 +374,27 @@ class MoneyflowApp(App):
     def _determine_date_range(self):
         """Determine date range based on CLI arguments.
 
-        Returns:
-            tuple: (start_date, end_date, cache_year_filter, cache_since_filter)
-        """
-        if self.custom_start_date:
-            start_date = self.custom_start_date
-            end_date = datetime.now().strftime("%Y-%m-%d")
-            cache_year_filter = None
-            cache_since_filter = self.custom_start_date
-        elif self.start_year:
-            start_date = f"{self.start_year}-01-01"
-            end_date = datetime.now().strftime("%Y-%m-%d")
-            cache_year_filter = self.start_year
-            cache_since_filter = None
-        else:
-            # Fetch ALL transactions (no date filter for offline-first approach)
-            start_date = None
-            end_date = None
-            cache_year_filter = None
-            cache_since_filter = None
+        Separates display filtering (--mtd, --since) from cache behavior:
+        - display_start_date: What the user wants to VIEW (filters the UI)
+        - cache filters: What the cache actually STORES (preserved on refresh)
 
-        return start_date, end_date, cache_year_filter, cache_since_filter
+        Returns:
+            tuple: (display_start_date, cache_year_filter, cache_since_filter)
+        """
+        # Display filter - what user wants to see
+        if self.custom_start_date:
+            display_start_date = self.custom_start_date
+        elif self.start_year:
+            display_start_date = f"{self.start_year}-01-01"
+        else:
+            display_start_date = None
+
+        # Cache filters - determined by existing cache or first fetch
+        # These are set later based on what's actually cached
+        cache_year_filter = None
+        cache_since_filter = None
+
+        return display_start_date, cache_year_filter, cache_since_filter
 
     @staticmethod
     def _filter_df_by_start_date(df: pl.DataFrame, start_date: str) -> pl.DataFrame:
@@ -832,65 +839,31 @@ class MoneyflowApp(App):
             return False
 
     async def _check_and_load_cache(self, loading_status):
-        """Check if cache is valid and auto-load if available.
+        """Check cache status and determine refresh strategy.
+
+        Uses the two-tier cache system to determine what data needs refreshing:
+        - Hot cache: Recent 90 days, refreshed every 6 hours
+        - Cold cache: Historical data (>90 days), refreshed every 30 days
+
+        Optimization: If --mtd or --since is within hot window (90 days),
+        only hot cache is loaded for faster startup.
 
         Args:
             loading_status: Loading status widget
 
         Returns:
-            tuple: (df, categories, category_groups) or None if not using cache
+            tuple: (data, strategy) where:
+                - data is (df, categories, category_groups) or None
+                - strategy is RefreshStrategy indicating what to fetch
         """
-        logger = get_logger(__name__)
+        if not self.cache_orchestrator:
+            return None, RefreshStrategy.ALL
 
-        # Auto-load cache if valid (no prompt needed with encrypted cache + 24h expiry)
-        use_cache = (
-            self.cache_manager
-            and not self.force_refresh
-            and self.cache_manager.is_cache_valid(
-                year=self.cache_year_filter, since=self.cache_since_filter
-            )
+        return await self.cache_orchestrator.check_and_load_cache(
+            force_refresh=self.force_refresh,
+            custom_start_date=self.custom_start_date,
+            status_update=loading_status.update,
         )
-
-        if use_cache:
-            # Load from cache
-            loading_status.update("📦 Loading from cache...")
-            cache_info = self.cache_manager.get_cache_info()
-            result = self.cache_manager.load_cache()
-            if result:
-                df, categories, category_groups, metadata = result
-
-                # Apply category grouping dynamically (so CATEGORY_GROUPS changes take effect)
-                # Note: DataManager.__init__() already loaded config.yaml and built the mapping
-                loading_status.update("🔄 Applying category groupings...")
-                df = self.data_manager.apply_category_groups(df)
-
-                # Load merchant cache for autocomplete (especially important for MTD mode)
-                try:
-                    cached_merchants = await self.data_manager.refresh_merchant_cache(force=False)
-                    self.data_manager.all_merchants = cached_merchants
-                    logger.debug(f"Loaded {len(cached_merchants)} merchants from cache")
-                except Exception as e:
-                    logger.warning(f"Merchant cache load failed: {e}")
-                    self.data_manager.all_merchants = []
-
-                loading_status.update(f"✅ Loaded {len(df):,} transactions from cache!")
-
-                # Show notification about cache usage
-                if cache_info:
-                    age_str = cache_info["age"]
-                    self.notify(
-                        f"📦 Loaded from cache ({age_str}) • Use --refresh to force update",
-                        severity="information",
-                        timeout=4.0,
-                    )
-
-                return df, categories, category_groups
-            else:
-                # Cache load failed, fall back to API
-                loading_status.update("⚠ Cache load failed, fetching from API...")
-                return None
-
-        return None
 
     async def _fetch_data_with_retry(self, creds, start_date, end_date, loading_status):
         """Fetch data from API with retry logic.
@@ -908,19 +881,19 @@ class MoneyflowApp(App):
         logger = get_logger(__name__)
 
         # Update status based on date range
+        today_str = date_type.today().isoformat()
         if self.custom_start_date:
             loading_status.update(
-                f"📊 Fetching transactions from {self.custom_start_date} onwards..."
+                f"🔄 Full refresh: fetching {self.custom_start_date} to {today_str}..."
             )
         elif self.start_year:
-            loading_status.update(f"📊 Fetching transactions from {self.start_year} onwards...")
+            loading_status.update(
+                f"🔄 Full refresh: fetching {self.start_year}-01-01 to {today_str}..."
+            )
         else:
-            loading_status.update("📊 Fetching ALL transaction data from backend...")
+            loading_status.update("🔄 Full refresh: fetching all transaction history...")
 
         loading_status.update("⏳ This may take a minute for large accounts (10k+ transactions)...")
-        loading_status.update(
-            "💡 TIP: This is a one-time download. Future operations will be instant!"
-        )
 
         def update_progress(msg: str) -> None:
             """Update the loading status display."""
@@ -976,14 +949,15 @@ class MoneyflowApp(App):
             )
 
             # Save to cache for next time (only if --cache was passed)
+            # Always save as full cache (no filters) - display filters applied separately
             if self.cache_manager:
                 loading_status.update("💾 Saving to cache...")
                 self.cache_manager.save_cache(
                     transactions_df=df,
                     categories=categories,
                     category_groups=category_groups,
-                    year=self.cache_year_filter,
-                    since=self.cache_since_filter,
+                    year=None,  # Full cache - no year filter
+                    since=None,  # Full cache - no since filter
                 )
                 loading_status.update(f"✅ Loaded {len(df):,} transactions and cached!")
             else:
@@ -1005,6 +979,30 @@ class MoneyflowApp(App):
                 f"❌ Failed to load data: {e}\n\nCheck {log_path} for details.\n\nPress 'q' to quit"
             )
             return None
+
+    async def _partial_refresh(self, strategy, creds, loading_status):
+        """Perform a partial refresh of cache data.
+
+        This is called when one tier is valid but the other needs refreshing:
+        - HOT_ONLY: Hot tier expired, cold is valid. Fetch recent 90 days.
+        - COLD_ONLY: Cold tier expired, hot is valid. Fetch historical data.
+
+        Args:
+            strategy: RefreshStrategy (HOT_ONLY or COLD_ONLY)
+            creds: Credentials dict (may be None in demo mode)
+            loading_status: Loading status widget
+
+        Returns:
+            tuple: (df, categories, category_groups) or None on failure
+        """
+        if not self.cache_orchestrator:
+            return None
+
+        return await self.cache_orchestrator.partial_refresh(
+            strategy=strategy,
+            creds=creds,
+            status_update=loading_status.update,
+        )
 
     async def _handle_init_error(self, error, loading_status):
         """Handle initialization errors.
@@ -1177,34 +1175,66 @@ class MoneyflowApp(App):
                 profile_dir=determined_profile_dir, backend_type=determined_backend_type
             )
 
-            # Step 4: Determine date range
-            start_date, end_date, self.cache_year_filter, self.cache_since_filter = (
+            # Step 4: Determine display filter (separate from cache)
+            self.display_start_date, self.cache_year_filter, self.cache_since_filter = (
                 self._determine_date_range()
             )
 
-            # Step 5: Check and load cache
-            cached_data = await self._check_and_load_cache(loading_status)
+            # Step 5: Check cache and determine refresh strategy
+            cached_data, strategy = await self._check_and_load_cache(loading_status)
 
-            if cached_data:
+            if strategy == RefreshStrategy.NONE and cached_data:
+                # Both cache tiers valid - use cached data entirely
                 df, categories, category_groups = cached_data
                 # Filter cached data to match requested date range (e.g., --mtd)
                 # Cache may contain more data than requested (e.g., full year cache for MTD request)
-                if start_date:
+                if self.display_start_date:
                     original_count = len(df)
-                    df = self._filter_df_by_start_date(df, start_date)
+                    df = self._filter_df_by_start_date(df, self.display_start_date)
                     if len(df) < original_count:
                         loading_status.update(
                             f"📦 Filtered cache: {len(df):,} of {original_count:,} transactions"
                         )
+            elif strategy in (RefreshStrategy.HOT_ONLY, RefreshStrategy.COLD_ONLY):
+                # Partial refresh - one tier valid, refresh the other
+                partial_result = await self._partial_refresh(strategy, creds, loading_status)
+                if partial_result:
+                    df, categories, category_groups = partial_result
+                    # Filter if needed
+                    if self.display_start_date:
+                        original_count = len(df)
+                        df = self._filter_df_by_start_date(df, self.display_start_date)
+                        if len(df) < original_count:
+                            loading_status.update(
+                                f"📦 Filtered: {len(df):,} of {original_count:,} transactions"
+                            )
+                else:
+                    # Partial refresh failed, fall back to full fetch
+                    # Always fetch full data - display filter applied after
+                    fetch_result = await self._fetch_data_with_retry(
+                        creds, None, None, loading_status
+                    )
+                    if fetch_result is None:
+                        has_error = True
+                        return
+                    df, categories, category_groups = fetch_result
             else:
-                # Step 6: Fetch from API with retry logic
-                fetch_result = await self._fetch_data_with_retry(
-                    creds, start_date, end_date, loading_status
-                )
+                # Step 6: Full fetch from API (BOTH, ALL, or no cache)
+                # Always fetch full data - display filter applied after
+                fetch_result = await self._fetch_data_with_retry(creds, None, None, loading_status)
                 if fetch_result is None:
                     has_error = True
                     return
                 df, categories, category_groups = fetch_result
+
+            # Apply display filter after fetch (cache stores full data)
+            if self.display_start_date and strategy != RefreshStrategy.NONE:
+                original_count = len(df)
+                df = self._filter_df_by_start_date(df, self.display_start_date)
+                if len(df) < original_count:
+                    loading_status.update(
+                        f"📦 Filtered: {len(df):,} of {original_count:,} transactions"
+                    )
 
             # Step 7: Store data
             self._store_data(df, categories, category_groups)
@@ -1780,7 +1810,11 @@ class MoneyflowApp(App):
 
     def action_show_transaction_details(self) -> None:
         """Show detailed information about current transaction."""
-        if self.data_manager is None or self.state.view_mode != ViewMode.DETAIL:
+        # Must be in detail view showing actual transactions (not sub-grouped aggregates)
+        is_transaction_view = (
+            self.state.view_mode == ViewMode.DETAIL and not self.state.sub_grouping_mode
+        )
+        if self.data_manager is None or not is_transaction_view:
             self.notify("Details only available in transaction view", timeout=2)
             return
 
@@ -1853,7 +1887,11 @@ class MoneyflowApp(App):
 
     def action_delete_transaction(self) -> None:
         """Delete current transaction with confirmation."""
-        if self.data_manager is None or self.state.view_mode != ViewMode.DETAIL:
+        # Must be in detail view showing actual transactions (not sub-grouped aggregates)
+        is_transaction_view = (
+            self.state.view_mode == ViewMode.DETAIL and not self.state.sub_grouping_mode
+        )
+        if self.data_manager is None or not is_transaction_view:
             self.notify("Delete only works in transaction detail view", timeout=2)
             return
 
@@ -2216,6 +2254,11 @@ class MoneyflowApp(App):
                     else None
                 )
 
+                # Detect if we're showing filtered data (--mtd, --year, --since).
+                # When filtered, cache updates must use save_hot_cache() to preserve
+                # the cold cache data.
+                is_filtered_view = self.display_start_date is not None
+
                 self.controller.handle_commit_result(
                     success_count=success_count,
                     failure_count=failure_count,
@@ -2223,6 +2266,7 @@ class MoneyflowApp(App):
                     saved_state=saved_state,
                     cache_filters=cache_filters,
                     bulk_merchant_renames=bulk_merchant_renames,
+                    is_filtered_view=is_filtered_view,
                 )
                 # Restore table position after commit completes
                 self._restore_table_position(saved_table_position)
