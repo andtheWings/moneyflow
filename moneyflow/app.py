@@ -304,8 +304,7 @@ class MoneyflowApp(App):
             self.query_one("#loading", LoadingIndicator).display = False
             self.query_one("#loading-status", Static).display = False
 
-            # Attempt to use saved session or show login prompt
-            # Must run in a worker to use push_screen with wait_for_dismiss
+            # Start data initialization in a worker
             self.run_worker(self.initialize_data(), exclusive=True)
         except Exception as e:
             # Try to show error to user
@@ -361,9 +360,10 @@ class MoneyflowApp(App):
             backend_type=backend_type,
         )
 
-        # Initialize cache manager (only if encryption key available)
-        # Backends like Amazon don't have encryption keys and don't need caching
-        if self.cache_path is not None and self.encryption_key is not None:
+        # Initialize cache manager for backends that support caching
+        # cache_path is None for backends like Amazon that don't need caching
+        # encryption_key can be None for plaintext credentials (CacheManager supports both modes)
+        if self.cache_path is not None:
             # Determine cache directory
             if self.cache_path == "":
                 # Default cache location - use profile-specific or legacy location
@@ -461,7 +461,15 @@ class MoneyflowApp(App):
         logger.debug(f"Credentials exist: {cred_manager.credentials_exist()}")
 
         if cred_manager.credentials_exist():
-            # Show unlock screen
+            # Check if credentials are encrypted or plaintext
+            if cred_manager.is_plaintext():
+                # Plaintext credentials - load directly without unlock screen
+                logger.debug("Loading plaintext credentials (no encryption)")
+                creds, _ = cred_manager.load_credentials()
+                self.encryption_key = None  # No encryption key for plaintext
+                return creds
+
+            # Encrypted credentials - show unlock screen
             result = await self.push_screen(CredentialUnlockScreen(), wait_for_dismiss=True)
 
             if result is None:
@@ -593,7 +601,15 @@ class MoneyflowApp(App):
 
                 return account.id, profile_dir, creds
 
-            # Load existing credentials
+            # Check if credentials are plaintext (no encryption)
+            if cred_manager.is_plaintext():
+                # Plaintext credentials - load directly without unlock screen
+                logger.debug(f"Loading plaintext credentials for account {account.id}")
+                creds, _ = cred_manager.load_credentials()
+                self.encryption_key = None  # No encryption key for plaintext
+                return account.id, profile_dir, creds
+
+            # Encrypted credentials - show unlock screen
             creds = await self.push_screen(
                 CredentialUnlockScreen(profile_dir=profile_dir), wait_for_dismiss=True
             )

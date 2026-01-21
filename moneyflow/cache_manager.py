@@ -15,6 +15,8 @@ This ensures sensitive financial data is protected at rest.
 import io
 import json
 import logging
+import os
+import tempfile
 from datetime import date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -22,6 +24,8 @@ from typing import Any, Dict, Optional, Tuple
 
 import polars as pl
 from cryptography.fernet import Fernet, InvalidToken
+
+from .file_utils import secure_write_file
 
 logger = logging.getLogger(__name__)
 
@@ -37,16 +41,19 @@ class RefreshStrategy(Enum):
 
 class CacheManager:
     """
-    Manage encrypted two-tier caching of transaction data to disk.
+    Manage two-tier caching of transaction data to disk.
 
-    Cache files are encrypted using Fernet symmetric encryption with the same
-    key used for credential encryption. This ensures financial data is protected at rest.
+    Supports two modes:
+    1. Encrypted mode (encryption_key provided): Cache files are encrypted using
+       Fernet symmetric encryption with the same key used for credential encryption.
+    2. Unencrypted mode (encryption_key is None): Cache files are stored as
+       plain Parquet/JSON with restricted file permissions.
 
     Two-tier cache structure:
     - cache_metadata.json: Unencrypted metadata for fast validation
-    - hot_transactions.parquet.enc: Encrypted recent transactions (last 90 days)
-    - cold_transactions.parquet.enc: Encrypted historical transactions (>90 days)
-    - categories.json.enc: Encrypted category hierarchy
+    - hot_transactions.parquet[.enc]: Recent transactions (last 90 days)
+    - cold_transactions.parquet[.enc]: Historical transactions (>90 days)
+    - categories.json[.enc]: Category hierarchy
     """
 
     CACHE_VERSION = "3.0"  # Bumped for two-tier cache format
@@ -69,7 +76,7 @@ class CacheManager:
         Args:
             cache_dir: Directory for cache files. Defaults to ~/.moneyflow/cache/
             encryption_key: Fernet encryption key (32-byte URL-safe base64-encoded).
-                           If None, caching will be disabled.
+                           If None, caching will use unencrypted files.
         """
         if cache_dir:
             self.cache_dir = Path(cache_dir).expanduser()
@@ -79,20 +86,28 @@ class CacheManager:
         # Create cache directory if it doesn't exist
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Two-tier encrypted cache files
-        self.hot_transactions_file = self.cache_dir / "hot_transactions.parquet.enc"
-        self.cold_transactions_file = self.cache_dir / "cold_transactions.parquet.enc"
-        self.categories_file = self.cache_dir / "categories.json.enc"
+        # Encryption setup
+        self.encryption_key = encryption_key
+        self.fernet = Fernet(encryption_key) if encryption_key else None
+        self.is_encrypted = encryption_key is not None
+
+        # File paths depend on encryption mode
+        if self.is_encrypted:
+            # Encrypted cache files
+            self.hot_transactions_file = self.cache_dir / "hot_transactions.parquet.enc"
+            self.cold_transactions_file = self.cache_dir / "cold_transactions.parquet.enc"
+            self.categories_file = self.cache_dir / "categories.json.enc"
+        else:
+            # Unencrypted cache files
+            self.hot_transactions_file = self.cache_dir / "hot_transactions.parquet"
+            self.cold_transactions_file = self.cache_dir / "cold_transactions.parquet"
+            self.categories_file = self.cache_dir / "categories.json"
 
         # Legacy single-file cache (for detection and cleanup)
         self.legacy_transactions_file = self.cache_dir / "transactions.parquet.enc"
 
         # Unencrypted metadata for fast validation
         self.metadata_file = self.cache_dir / "cache_metadata.json"
-
-        # Encryption setup
-        self.encryption_key = encryption_key
-        self.fernet = Fernet(encryption_key) if encryption_key else None
 
     def _get_boundary_date(self) -> date:
         """Get the boundary date between hot and cold cache (90 days ago)."""
@@ -371,37 +386,60 @@ class CacheManager:
             return json.load(f)
 
     def _save_metadata(self, metadata: Dict[str, Any]) -> None:
-        """Save cache metadata."""
-        with open(self.metadata_file, "w") as f:
-            json.dump(metadata, f, indent=2)
+        """Save cache metadata with secure permissions."""
+        json_data = json.dumps(metadata, indent=2)
+        secure_write_file(self.metadata_file, json_data, "w")
 
-    def _save_encrypted_parquet(self, df: pl.DataFrame, file_path: Path) -> None:
-        """Save DataFrame as encrypted Parquet file."""
-        if not self.fernet:
-            raise ValueError("Cannot save cache: encryption key not set")
+    def _save_parquet(self, df: pl.DataFrame, file_path: Path) -> None:
+        """Save DataFrame as Parquet file (encrypted or plain based on mode)."""
+        if self.is_encrypted:
+            # Encrypted mode - must buffer to encrypt
+            buffer = io.BytesIO()
+            df.write_parquet(buffer)
+            parquet_bytes = buffer.getvalue()
+            encrypted_parquet = self.fernet.encrypt(parquet_bytes)
+            secure_write_file(file_path, encrypted_parquet, "wb")
+        else:
+            # Unencrypted mode - use streaming write with atomic rename for security
+            # Write to temp file with secure permissions, then atomic rename
+            dir_path = file_path.parent
+            fd, temp_path = tempfile.mkstemp(dir=dir_path, prefix=".tmp_parquet_")
+            try:
+                os.fchmod(fd, 0o600)
+                os.close(fd)
+                fd = -1  # Mark as closed
+                # Stream write directly to temp file (no memory buffering)
+                df.write_parquet(temp_path)
+                # Atomic rename to final location
+                os.replace(temp_path, file_path)
+            except Exception:
+                if fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+                raise
 
-        buffer = io.BytesIO()
-        df.write_parquet(buffer)
-        parquet_bytes = buffer.getvalue()
-        encrypted_parquet = self.fernet.encrypt(parquet_bytes)
-
-        with open(file_path, "wb") as f:
-            f.write(encrypted_parquet)
-
-    def _load_encrypted_parquet(self, file_path: Path) -> Optional[pl.DataFrame]:
-        """Load DataFrame from encrypted Parquet file."""
-        if not self.fernet:
-            raise ValueError("Cannot load cache: encryption key not set")
-
+    def _load_parquet(self, file_path: Path) -> Optional[pl.DataFrame]:
+        """Load DataFrame from Parquet file (encrypted or plain based on mode)."""
         if not file_path.exists():
             return None
 
         try:
-            with open(file_path, "rb") as f:
-                encrypted_parquet = f.read()
+            if self.is_encrypted:
+                # Encrypted mode
+                with open(file_path, "rb") as f:
+                    encrypted_parquet = f.read()
 
-            parquet_bytes = self.fernet.decrypt(encrypted_parquet)
-            return pl.read_parquet(io.BytesIO(parquet_bytes))
+                parquet_bytes = self.fernet.decrypt(encrypted_parquet)
+                return pl.read_parquet(io.BytesIO(parquet_bytes))
+            else:
+                # Unencrypted mode - read directly
+                return pl.read_parquet(file_path)
 
         except InvalidToken:
             print(f"Warning: Failed to decrypt {file_path.name} (invalid encryption key)")
@@ -436,18 +474,20 @@ class CacheManager:
         return metadata
 
     def _save_categories(self, categories: Dict, category_groups: Dict) -> None:
-        """Encrypt and write categories data to disk."""
-        if not self.fernet:
-            raise ValueError("Cannot save cache: encryption key not set")
-
+        """Save categories data to disk (encrypted or plain based on mode)."""
         cache_data = {
             "categories": categories,
             "category_groups": category_groups,
         }
         categories_json = json.dumps(cache_data, indent=2)
-        encrypted_categories = self.fernet.encrypt(categories_json.encode())
-        with open(self.categories_file, "wb") as f:
-            f.write(encrypted_categories)
+
+        if self.is_encrypted:
+            # Encrypted mode
+            encrypted_categories = self.fernet.encrypt(categories_json.encode())
+            secure_write_file(self.categories_file, encrypted_categories, "wb")
+        else:
+            # Unencrypted mode - write with secure permissions from creation
+            secure_write_file(self.categories_file, categories_json, "w")
 
     def save_cache(
         self,
@@ -470,13 +510,7 @@ class CacheManager:
             category_groups: Dict of category groups
             year: Year filter used (if any)
             since: Since date filter used (if any)
-
-        Raises:
-            ValueError: If encryption key is not set
         """
-        if not self.fernet:
-            raise ValueError("Cannot save cache: encryption key not set")
-
         # Calculate boundary date
         boundary_date = self._get_boundary_date()
         boundary_str = boundary_date.isoformat()
@@ -533,8 +567,8 @@ class CacheManager:
                 pass  # No existing metadata
 
         # Save both tiers
-        self._save_encrypted_parquet(hot_df, self.hot_transactions_file)
-        self._save_encrypted_parquet(cold_df, self.cold_transactions_file)
+        self._save_parquet(hot_df, self.hot_transactions_file)
+        self._save_parquet(cold_df, self.cold_transactions_file)
 
         # Save categories
         self._save_categories(categories, category_groups)
@@ -550,7 +584,7 @@ class CacheManager:
             "year_filter": year,
             "since_filter": since,
             "total_transactions": len(transactions_df),
-            "encrypted": True,
+            "encrypted": self.is_encrypted,
         }
         self._save_metadata(metadata)
 
@@ -573,9 +607,6 @@ class CacheManager:
             categories: Optional updated categories (if None, preserves existing)
             category_groups: Optional updated category groups
         """
-        if not self.fernet:
-            raise ValueError("Cannot save cache: encryption key not set")
-
         # Log hot cache save
         hot_earliest = hot_df["date"].min() if len(hot_df) > 0 else None
         hot_latest = hot_df["date"].max() if len(hot_df) > 0 else None
@@ -585,7 +616,7 @@ class CacheManager:
         )
 
         # Save hot tier
-        self._save_encrypted_parquet(hot_df, self.hot_transactions_file)
+        self._save_parquet(hot_df, self.hot_transactions_file)
 
         # Update categories if provided
         if categories is not None and category_groups is not None:
@@ -621,9 +652,6 @@ class CacheManager:
         Args:
             cold_df: DataFrame of historical transactions
         """
-        if not self.fernet:
-            raise ValueError("Cannot save cache: encryption key not set")
-
         # Log cold cache save
         cold_earliest = cold_df["date"].min() if len(cold_df) > 0 else None
         cold_latest = cold_df["date"].max() if len(cold_df) > 0 else None
@@ -633,7 +661,7 @@ class CacheManager:
         )
 
         # Save cold tier
-        self._save_encrypted_parquet(cold_df, self.cold_transactions_file)
+        self._save_parquet(cold_df, self.cold_transactions_file)
 
         # Update metadata
         try:
@@ -654,11 +682,11 @@ class CacheManager:
 
     def load_hot_cache(self) -> Optional[pl.DataFrame]:
         """Load only hot tier from cache."""
-        return self._load_encrypted_parquet(self.hot_transactions_file)
+        return self._load_parquet(self.hot_transactions_file)
 
     def load_cold_cache(self) -> Optional[pl.DataFrame]:
         """Load only cold tier from cache."""
-        return self._load_encrypted_parquet(self.cold_transactions_file)
+        return self._load_parquet(self.cold_transactions_file)
 
     def merge_tiers(
         self, hot_df: Optional[pl.DataFrame], cold_df: Optional[pl.DataFrame]
@@ -698,13 +726,7 @@ class CacheManager:
 
         Returns:
             Tuple of (transactions_df, categories, category_groups, metadata) or None if cache invalid
-
-        Raises:
-            ValueError: If encryption key is not set
         """
-        if not self.fernet:
-            raise ValueError("Cannot load cache: encryption key not set")
-
         if not self.cache_exists():
             return None
 
@@ -716,8 +738,8 @@ class CacheManager:
                 return None
 
             # Load both tiers
-            hot_df = self._load_encrypted_parquet(self.hot_transactions_file)
-            cold_df = self._load_encrypted_parquet(self.cold_transactions_file)
+            hot_df = self._load_parquet(self.hot_transactions_file)
+            cold_df = self._load_parquet(self.cold_transactions_file)
 
             if hot_df is None and cold_df is None:
                 return None
@@ -726,16 +748,23 @@ class CacheManager:
             combined_df = self.merge_tiers(hot_df, cold_df)
 
             # Load categories
-            with open(self.categories_file, "rb") as f:
-                encrypted_categories = f.read()
+            if self.is_encrypted:
+                # Encrypted mode
+                with open(self.categories_file, "rb") as f:
+                    encrypted_categories = f.read()
 
-            try:
-                categories_json = self.fernet.decrypt(encrypted_categories).decode()
-            except InvalidToken:
-                print("Warning: Failed to decrypt categories cache (invalid encryption key)")
-                return None
+                try:
+                    categories_json = self.fernet.decrypt(encrypted_categories).decode()
+                except InvalidToken:
+                    print("Warning: Failed to decrypt categories cache (invalid encryption key)")
+                    return None
 
-            cache_data = json.loads(categories_json)
+                cache_data = json.loads(categories_json)
+            else:
+                # Unencrypted mode
+                with open(self.categories_file, "r") as f:
+                    cache_data = json.load(f)
+
             categories = cache_data["categories"]
             category_groups = cache_data["category_groups"]
 
@@ -746,12 +775,19 @@ class CacheManager:
             return None
 
     def clear_cache(self) -> None:
-        """Delete all cache files (both two-tier and legacy)."""
+        """Delete all cache files (encrypted, unencrypted, and legacy)."""
+        # Delete both encrypted and unencrypted versions
         files = [
-            self.hot_transactions_file,
-            self.cold_transactions_file,
+            # Encrypted files
+            self.cache_dir / "hot_transactions.parquet.enc",
+            self.cache_dir / "cold_transactions.parquet.enc",
+            self.cache_dir / "categories.json.enc",
+            # Unencrypted files
+            self.cache_dir / "hot_transactions.parquet",
+            self.cache_dir / "cold_transactions.parquet",
+            self.cache_dir / "categories.json",
+            # Metadata and legacy
             self.metadata_file,
-            self.categories_file,
             self.legacy_transactions_file,
         ]
         for file in files:
