@@ -3,7 +3,7 @@
 Terminal interface for Monarch Money with full editing and sync capabilities.
 
 !!! tip "New to Monarch Money?"
-    Get **50% off your first year** with this [special offer link](https://monarchmoney.sjv.io/3JGDYA).
+    Get **50% off your first year** with this [special offer link](https://monarchmoney.sjv.io/c/5108110/3777629/39024).
 
 ## Overview
 
@@ -18,14 +18,14 @@ Terminal interface for Monarch Money with full editing and sync capabilities.
 
 ## Prerequisites
 
-1. Active [Monarch Money subscription](https://monarchmoney.sjv.io/3JGDYA)
+1. Active [Monarch Money subscription](https://monarchmoney.sjv.io/c/5108110/3777629/39024)
 2. 2FA secret key (see below for setup)
 
 ---
 
 ## Getting Your 2FA Secret
 
-1. Log into [Monarch Money](https://monarchmoney.sjv.io/3JGDYA)
+1. Log into [Monarch Money](https://monarchmoney.sjv.io/c/5108110/3777629/39024)
 2. Go to **Settings** → **Security**
 3. **Disable** existing 2FA, then **re-enable** it
 4. Click **"Can't scan?"** when shown the QR code

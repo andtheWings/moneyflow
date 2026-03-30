@@ -59,14 +59,14 @@ Choose your platform:
 ## With Monarch Money
 
 !!! tip "New to Monarch Money?"
-    Get **50% off your first year** with this [special offer link](https://monarchmoney.sjv.io/3JGDYA).
+    Get **50% off your first year** with this [special offer link](https://monarchmoney.sjv.io/c/5108110/3777629/39024).
 
 ### Step 1: Get Your 2FA Secret
 
 !!! warning "Important: Do this BEFORE running moneyflow"
     You'll need your 2FA/TOTP secret key. Here's how to get it:
 
-    1. Log into [Monarch Money](https://monarchmoney.sjv.io/3JGDYA) on the web
+    1. Log into [Monarch Money](https://monarchmoney.sjv.io/c/5108110/3777629/39024) on the web
     2. Go to **Settings** → **Security**
     3. **Disable** 2FA, then **re-enable** it
     4. When shown the QR code, click **"Can't scan?"** or **"Manual entry"**

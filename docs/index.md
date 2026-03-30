@@ -21,7 +21,7 @@ uvx moneyflow --demo  # Try with demo data
 
 Track spending, bulk edit transactions, and navigate your financial
 data at lightning speed. Supports personal finance platforms like
-[Monarch Money](https://monarchmoney.sjv.io/3JGDYA), YNAB, or even
+[Monarch Money](https://monarchmoney.sjv.io/c/5108110/3777629/39024), YNAB, or even
 analyzing your Amazon purchase history.
 
 <div class="quick-links" markdown>
@@ -93,7 +93,7 @@ Manage multiple accounts (Monarch, YNAB, Amazon) and switch between them seamles
 
 **Currently supported:**
 
-- **[Monarch Money](https://monarchmoney.sjv.io/3JGDYA)** - Full-featured integration with real-time sync
+- **[Monarch Money](https://monarchmoney.sjv.io/c/5108110/3777629/39024)** - Full-featured integration with real-time sync
 - **[YNAB (You Need A Budget)](https://www.ynab.com/)** - Full-featured integration with real-time sync
 - **[Amazon Purchase History](guide/amazon-mode.md)** - Import and analyze your Amazon order history from official
   data exports
