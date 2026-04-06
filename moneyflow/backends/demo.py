@@ -7,7 +7,7 @@ of the TUI without connecting to a real account or exposing personal finances.
 
 from typing import Any, Dict, List, Optional
 
-from ..demo_data_generator import generate_demo_data
+from ..data.demo_data_generator import generate_demo_data
 from .base import FinanceBackend
 
 
@@ -190,6 +190,10 @@ class DemoBackend(FinanceBackend):
             "net": total_income + total_expenses,
             "updates_made": len(self.update_calls),
         }
+
+    @property
+    def supports_category_sync(self) -> bool:
+        return False
 
     def get_backend_type(self) -> str:
         """Return the backend type identifier."""

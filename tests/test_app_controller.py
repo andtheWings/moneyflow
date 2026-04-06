@@ -13,17 +13,60 @@ from datetime import datetime
 import polars as pl
 import pytest
 
-from moneyflow.app_controller import AppController
-from moneyflow.data_manager import DataManager
-from moneyflow.state import AppState, SortDirection, SortMode, ViewMode
+from moneyflow.backends.base import AggregationFunc, ComputedColumn
+from moneyflow.data.data_manager import DataManager
+from moneyflow.data.state import AppState, SortDirection, SortMode, TransactionEdit, ViewMode
+from moneyflow.tui.app_controller import AppController
 
 from .mock_view import MockViewPresenter
+
+
+class ConfigurableStubCacheManager:
+    """Reusable stub for testing cache tier availability."""
+
+    def __init__(self, hot_df=None, cold_df=None):
+        self._hot_df = hot_df
+        self._cold_df = cold_df
+        self.saved_hot = None
+        self.saved_cold = None
+        self.saved_full = None
+
+    def load_hot_cache(self):
+        return self._hot_df.clone() if self._hot_df is not None else None
+
+    def load_cold_cache(self):
+        return self._cold_df.clone() if self._cold_df is not None else None
+
+    def save_hot_cache(self, hot_df, categories, category_groups):
+        self.saved_hot = hot_df
+
+    def save_cold_cache(self, cold_df):
+        self.saved_cold = cold_df
+
+    def save_cache(self, transactions_df, categories, category_groups, year=None, since=None):
+        self.saved_full = transactions_df
 
 
 @pytest.fixture
 def mock_view():
     """Provide mock view presenter."""
     return MockViewPresenter()
+
+
+@pytest.fixture
+def empty_transactions_df():
+    """Provide an empty transactions DataFrame."""
+    return pl.DataFrame(
+        schema={
+            "id": pl.Utf8,
+            "date": pl.Date,
+            "amount": pl.Float64,
+            "merchant": pl.Utf8,
+            "category": pl.Utf8,
+            "group": pl.Utf8,
+            "hideFromReports": pl.Boolean,
+        },
+    )
 
 
 @pytest.fixture
@@ -310,31 +353,10 @@ class TestStatsCalculation:
         assert "Out:" in stats_text
         assert "Net:" in stats_text
 
-    async def test_stats_with_no_data(self, controller, mock_view):
+    async def test_stats_with_no_data(self, controller, mock_view, empty_transactions_df):
         """Test stats with empty dataset."""
-        # Clear data with proper schema
-        empty_df = pl.DataFrame(
-            {
-                "id": [],
-                "date": [],
-                "amount": [],
-                "merchant": [],
-                "category": [],
-                "group": [],
-                "hideFromReports": [],
-            },
-            schema={
-                "id": pl.Utf8,
-                "date": pl.Date,
-                "amount": pl.Float64,
-                "merchant": pl.Utf8,
-                "category": pl.Utf8,
-                "group": pl.Utf8,
-                "hideFromReports": pl.Boolean,
-            },
-        )
-        controller.data_manager.df = empty_df
-        controller.state.transactions_df = empty_df
+        controller.data_manager.df = empty_transactions_df
+        controller.state.transactions_df = empty_transactions_df
         controller.state.view_mode = ViewMode.MERCHANT
 
         controller.refresh_view()
@@ -417,7 +439,6 @@ class TestPendingChangesIndicator:
 
     async def test_with_pending_changes(self, controller, mock_view):
         """Should show count of pending edits."""
-        from moneyflow.state import TransactionEdit
 
         # Add some pending edits
         controller.data_manager.pending_edits = [
@@ -439,9 +460,27 @@ class TestCommitHandling:
     commits failed. These tests ensure it stays fixed.
     """
 
+    def _simulate_commit(
+        self,
+        controller,
+        edits,
+        success_count,
+        failure_count,
+        **kwargs,
+    ):
+        controller.data_manager.pending_edits = edits.copy()
+        controller.state.view_mode = ViewMode.DETAIL
+        saved_state = controller.state.save_view_state()
+        controller.handle_commit_result(
+            success_count=success_count,
+            failure_count=failure_count,
+            edits=edits,
+            saved_state=saved_state,
+            **kwargs,
+        )
+
     async def test_all_commits_succeed_applies_edits(self, controller, mock_view):
         """When ALL commits succeed, edits should be applied locally."""
-        from moneyflow.state import TransactionEdit
 
         # Set up initial data
         initial_df = controller.data_manager.df.clone()
@@ -451,15 +490,8 @@ class TestCommitHandling:
         edits = [
             TransactionEdit("txn_1", "merchant", initial_merchant, "NewMerchant", datetime.now())
         ]
-        controller.data_manager.pending_edits = edits.copy()
-
         # Simulate successful commit
-        controller.state.view_mode = ViewMode.DETAIL
-        saved_state = controller.state.save_view_state()
-
-        controller.handle_commit_result(
-            success_count=1, failure_count=0, edits=edits, saved_state=saved_state
-        )
+        self._simulate_commit(controller, edits, success_count=1, failure_count=0)
 
         # VERIFY: Edits applied locally
         updated_merchant = controller.data_manager.df.filter(pl.col("id") == "txn_1")["merchant"][0]
@@ -477,7 +509,6 @@ class TestCommitHandling:
 
         This is the data corruption bug we fixed.
         """
-        from moneyflow.state import TransactionEdit
 
         # Set up initial data
         initial_df = controller.data_manager.df.clone()
@@ -488,15 +519,8 @@ class TestCommitHandling:
             TransactionEdit("txn_1", "merchant", initial_merchant, "NewMerchant1", datetime.now()),
             TransactionEdit("txn_2", "merchant", "Old2", "NewMerchant2", datetime.now()),
         ]
-        controller.data_manager.pending_edits = edits.copy()
-
         # Simulate partial failure (1 success, 1 failure)
-        controller.state.view_mode = ViewMode.DETAIL
-        saved_state = controller.state.save_view_state()
-
-        controller.handle_commit_result(
-            success_count=1, failure_count=1, edits=edits, saved_state=saved_state
-        )
+        self._simulate_commit(controller, edits, success_count=1, failure_count=1)
 
         # CRITICAL VERIFICATION: Edits should NOT be applied
         current_merchant = controller.data_manager.df.filter(pl.col("id") == "txn_1")["merchant"][0]
@@ -511,7 +535,6 @@ class TestCommitHandling:
 
     async def test_all_failures_does_not_apply_edits(self, controller, mock_view):
         """When ALL commits fail, nothing should be applied."""
-        from moneyflow.state import TransactionEdit
 
         initial_df = controller.data_manager.df.clone()
 
@@ -519,14 +542,7 @@ class TestCommitHandling:
             TransactionEdit("txn_1", "merchant", "Old1", "New1", datetime.now()),
             TransactionEdit("txn_2", "merchant", "Old2", "New2", datetime.now()),
         ]
-        controller.data_manager.pending_edits = edits.copy()
-
-        controller.state.view_mode = ViewMode.DETAIL
-        saved_state = controller.state.save_view_state()
-
-        controller.handle_commit_result(
-            success_count=0, failure_count=2, edits=edits, saved_state=saved_state
-        )
+        self._simulate_commit(controller, edits, success_count=0, failure_count=2)
 
         # VERIFY: DataFrame unchanged
         assert controller.data_manager.df.equals(initial_df), (
@@ -538,23 +554,16 @@ class TestCommitHandling:
 
     async def test_commit_success_uses_force_rebuild_false(self, controller, mock_view):
         """Commit should use force_rebuild=False for smooth update."""
-        from moneyflow.state import TransactionEdit
 
         edits = [TransactionEdit("txn_1", "merchant", "Old", "New", datetime.now())]
 
-        controller.state.view_mode = ViewMode.DETAIL
-        saved_state = controller.state.save_view_state()
-
-        controller.handle_commit_result(
-            success_count=1, failure_count=0, edits=edits, saved_state=saved_state
-        )
+        self._simulate_commit(controller, edits, success_count=1, failure_count=0)
 
         # VERIFY: force_rebuild=False (no flash)
         mock_view.assert_force_rebuild(False)
 
     async def test_commit_failure_refreshes_view(self, controller, mock_view):
         """Failed commit should refresh view to show unchanged data."""
-        from moneyflow.state import TransactionEdit
 
         # Set up initial state
         controller.state.view_mode = ViewMode.DETAIL
@@ -564,14 +573,8 @@ class TestCommitHandling:
         edits = [
             TransactionEdit("txn_1", "merchant", initial_merchant, "NewMerchant", datetime.now())
         ]
-        controller.data_manager.pending_edits = edits.copy()
-
-        saved_state = controller.state.save_view_state()
-
         # Simulate failure
-        controller.handle_commit_result(
-            success_count=0, failure_count=1, edits=edits, saved_state=saved_state
-        )
+        self._simulate_commit(controller, edits, success_count=0, failure_count=1)
 
         # VERIFY: DataFrame unchanged (edits NOT applied)
         current_merchant = controller.data_manager.df.filter(pl.col("id") == "txn_1")["merchant"][0]
@@ -586,32 +589,6 @@ class TestCommitHandling:
 
     async def test_filtered_view_updates_cached_tiers(self, controller):
         """Filtered views should merge edits into cached tiers, not overwrite them."""
-        from moneyflow.state import TransactionEdit
-
-        class StubCacheManager:
-            def __init__(self, hot_df, cold_df):
-                self._hot_df = hot_df
-                self._cold_df = cold_df
-                self.saved_hot = None
-                self.saved_cold = None
-                self.saved_full = None
-
-            def load_hot_cache(self):
-                return self._hot_df.clone()
-
-            def load_cold_cache(self):
-                return self._cold_df.clone()
-
-            def save_hot_cache(self, hot_df, categories, category_groups):
-                self.saved_hot = hot_df
-
-            def save_cold_cache(self, cold_df):
-                self.saved_cold = cold_df
-
-            def save_cache(
-                self, transactions_df, categories, category_groups, year=None, since=None
-            ):
-                self.saved_full = transactions_df
 
         full_df = controller.data_manager.df
         hot_df = full_df.head(2)
@@ -619,21 +596,26 @@ class TestCommitHandling:
 
         edit_id = hot_df["id"][0]
         old_merchant = hot_df["merchant"][0]
-        edits = [TransactionEdit(edit_id, "merchant", old_merchant, "Edited", datetime.now())]
-        controller.data_manager.pending_edits = edits.copy()
-
+        edits = [
+            TransactionEdit(
+                edit_id,
+                "merchant",
+                old_merchant,
+                "Edited",
+                datetime.now(),
+            )
+        ]
         # Simulate filtered view with only a subset of hot transactions
         controller.data_manager.df = hot_df.head(1).clone()
 
-        stub_cache = StubCacheManager(hot_df, cold_df)
+        stub_cache = ConfigurableStubCacheManager(hot_df=hot_df, cold_df=cold_df)
         controller.cache_manager = stub_cache
 
-        saved_state = controller.state.save_view_state()
-        controller.handle_commit_result(
+        self._simulate_commit(
+            controller,
+            edits,
             success_count=1,
             failure_count=0,
-            edits=edits,
-            saved_state=saved_state,
             cache_filters={"year": None, "since": None},
             is_filtered_view=True,
         )
@@ -649,50 +631,31 @@ class TestCommitHandling:
 
     async def test_filtered_view_partial_cache_update_when_cold_unavailable(self, controller):
         """When cold cache is unavailable, hot should still be updated."""
-        from moneyflow.state import TransactionEdit
-
-        class StubCacheManager:
-            def __init__(self, hot_df):
-                self._hot_df = hot_df
-                self.saved_hot = None
-                self.saved_cold = None
-                self.saved_full = None
-
-            def load_hot_cache(self):
-                return self._hot_df.clone() if self._hot_df is not None else None
-
-            def load_cold_cache(self):
-                return None  # Simulate cold cache unavailable
-
-            def save_hot_cache(self, hot_df, categories, category_groups):
-                self.saved_hot = hot_df
-
-            def save_cold_cache(self, cold_df):
-                self.saved_cold = cold_df
-
-            def save_cache(
-                self, transactions_df, categories, category_groups, year=None, since=None
-            ):
-                self.saved_full = transactions_df
 
         full_df = controller.data_manager.df
         hot_df = full_df.head(3)
 
         edit_id = hot_df["id"][0]
         old_merchant = hot_df["merchant"][0]
-        edits = [TransactionEdit(edit_id, "merchant", old_merchant, "Edited", datetime.now())]
-        controller.data_manager.pending_edits = edits.copy()
+        edits = [
+            TransactionEdit(
+                edit_id,
+                "merchant",
+                old_merchant,
+                "Edited",
+                datetime.now(),
+            )
+        ]
         controller.data_manager.df = hot_df.head(1).clone()
 
-        stub_cache = StubCacheManager(hot_df)
+        stub_cache = ConfigurableStubCacheManager(hot_df=hot_df, cold_df=None)
         controller.cache_manager = stub_cache
 
-        saved_state = controller.state.save_view_state()
-        controller.handle_commit_result(
+        self._simulate_commit(
+            controller,
+            edits,
             success_count=1,
             failure_count=0,
-            edits=edits,
-            saved_state=saved_state,
             cache_filters={"year": None, "since": None},
             is_filtered_view=True,
         )
@@ -707,31 +670,6 @@ class TestCommitHandling:
 
     async def test_filtered_view_partial_cache_update_when_hot_unavailable(self, controller):
         """When hot cache is unavailable, cold should still be updated."""
-        from moneyflow.state import TransactionEdit
-
-        class StubCacheManager:
-            def __init__(self, cold_df):
-                self._cold_df = cold_df
-                self.saved_hot = None
-                self.saved_cold = None
-                self.saved_full = None
-
-            def load_hot_cache(self):
-                return None  # Simulate hot cache unavailable
-
-            def load_cold_cache(self):
-                return self._cold_df.clone() if self._cold_df is not None else None
-
-            def save_hot_cache(self, hot_df, categories, category_groups):
-                self.saved_hot = hot_df
-
-            def save_cold_cache(self, cold_df):
-                self.saved_cold = cold_df
-
-            def save_cache(
-                self, transactions_df, categories, category_groups, year=None, since=None
-            ):
-                self.saved_full = transactions_df
 
         full_df = controller.data_manager.df
         cold_df = full_df.tail(3)
@@ -739,19 +677,25 @@ class TestCommitHandling:
         # Edit a transaction that's in cold cache
         edit_id = cold_df["id"][0]
         old_merchant = cold_df["merchant"][0]
-        edits = [TransactionEdit(edit_id, "merchant", old_merchant, "ColdEdited", datetime.now())]
-        controller.data_manager.pending_edits = edits.copy()
+        edits = [
+            TransactionEdit(
+                edit_id,
+                "merchant",
+                old_merchant,
+                "ColdEdited",
+                datetime.now(),
+            )
+        ]
         controller.data_manager.df = cold_df.head(1).clone()
 
-        stub_cache = StubCacheManager(cold_df)
+        stub_cache = ConfigurableStubCacheManager(hot_df=None, cold_df=cold_df)
         controller.cache_manager = stub_cache
 
-        saved_state = controller.state.save_view_state()
-        controller.handle_commit_result(
+        self._simulate_commit(
+            controller,
+            edits,
             success_count=1,
             failure_count=0,
-            edits=edits,
-            saved_state=saved_state,
             cache_filters={"year": None, "since": None},
             is_filtered_view=True,
         )
@@ -771,30 +715,6 @@ class TestCommitHandling:
         Writing it as the full cache would lose historical transactions.
         Instead, we just log an error - edits are saved to backend.
         """
-        from moneyflow.state import TransactionEdit
-
-        class StubCacheManager:
-            def __init__(self):
-                self.saved_hot = None
-                self.saved_cold = None
-                self.saved_full = None
-
-            def load_hot_cache(self):
-                return None  # Both tiers unavailable
-
-            def load_cold_cache(self):
-                return None  # Both tiers unavailable
-
-            def save_hot_cache(self, hot_df, categories, category_groups):
-                self.saved_hot = hot_df
-
-            def save_cold_cache(self, cold_df):
-                self.saved_cold = cold_df
-
-            def save_cache(
-                self, transactions_df, categories, category_groups, year=None, since=None
-            ):
-                self.saved_full = transactions_df
 
         # Set up a filtered view with only partial data
         full_df = controller.data_manager.df
@@ -802,19 +722,25 @@ class TestCommitHandling:
 
         edit_id = filtered_df["id"][0]
         old_merchant = filtered_df["merchant"][0]
-        edits = [TransactionEdit(edit_id, "merchant", old_merchant, "Edited", datetime.now())]
-        controller.data_manager.pending_edits = edits.copy()
+        edits = [
+            TransactionEdit(
+                edit_id,
+                "merchant",
+                old_merchant,
+                "Edited",
+                datetime.now(),
+            )
+        ]
         controller.data_manager.df = filtered_df.clone()
 
-        stub_cache = StubCacheManager()
+        stub_cache = ConfigurableStubCacheManager(hot_df=None, cold_df=None)
         controller.cache_manager = stub_cache
 
-        saved_state = controller.state.save_view_state()
-        controller.handle_commit_result(
+        self._simulate_commit(
+            controller,
+            edits,
             success_count=1,
             failure_count=0,
-            edits=edits,
-            saved_state=saved_state,
             cache_filters={"year": None, "since": None},
             is_filtered_view=True,
         )
@@ -910,22 +836,9 @@ class TestEditQueueing:
         assert all(e.new_value == new_name for e in controller.data_manager.pending_edits)
         assert all(e.old_value == "Amazon" for e in controller.data_manager.pending_edits)
 
-    async def test_queue_edits_empty_dataframe(self, controller):
+    async def test_queue_edits_empty_dataframe(self, controller, empty_transactions_df):
         """Test queueing edits with empty DataFrame."""
-        empty_df = pl.DataFrame(
-            {
-                "id": [],
-                "merchant": [],
-                "category_id": [],
-            },
-            schema={
-                "id": pl.Utf8,
-                "merchant": pl.Utf8,
-                "category_id": pl.Utf8,
-            },
-        )
-
-        count = controller.queue_category_edits(empty_df, "cat_new")
+        count = controller.queue_category_edits(empty_transactions_df, "cat_new")
         assert count == 0
         assert len(controller.data_manager.pending_edits) == 0
 
@@ -940,7 +853,6 @@ class TestEditQueueing:
 
     async def test_queue_edits_appends_to_existing(self, controller):
         """Test that queueing appends to existing edits (doesn't replace)."""
-        from moneyflow.state import TransactionEdit
 
         # Add an existing edit
         controller.data_manager.pending_edits = [
@@ -1141,7 +1053,6 @@ class TestSortFieldCycling:
 
     async def test_account_view_with_computed_column_full_cycle(self, controller):
         """Account view with computed column: Account → Count → Amount → Order Date → Account."""
-        from moneyflow.backends.base import AggregationFunc, ComputedColumn
 
         # Mock backend with computed column
         order_date_col = ComputedColumn(
@@ -1180,7 +1091,6 @@ class TestSortFieldCycling:
 
     async def test_account_view_with_multiple_computed_columns(self, controller):
         """Account view with multiple computed columns cycles through all of them."""
-        from moneyflow.backends.base import AggregationFunc, ComputedColumn
 
         # Mock backend with two computed columns
         col1 = ComputedColumn(
@@ -1221,7 +1131,6 @@ class TestSortFieldCycling:
 
     async def test_computed_column_not_in_cycle_for_other_views(self, controller):
         """Computed columns filtered by view_modes don't appear in other views."""
-        from moneyflow.backends.base import AggregationFunc, ComputedColumn
 
         # Computed column only for account view
         order_date_col = ComputedColumn(
@@ -1985,7 +1894,6 @@ class TestMultiSelectOperations:
         controller.drill_down(first_merchant, 0)
 
         # Enable sub-grouping by setting it to a ViewMode (not a string)
-        from moneyflow.state import ViewMode
 
         controller.state.sub_grouping_mode = ViewMode.CATEGORY
         controller.refresh_view()

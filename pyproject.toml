@@ -46,7 +46,7 @@ Issues = "https://github.com/wesm/moneyflow/issues"
 
 [project.scripts]
 moneyflow = "moneyflow.cli:cli"
-moneyflow-setup = "moneyflow.credentials:setup_credentials_interactive"
+moneyflow-setup = "moneyflow.data.credentials:setup_credentials_interactive"
 moneyflow-mcp = "moneyflow.mcp.__main__:main"
 
 [build-system]
@@ -65,6 +65,7 @@ dev = [
     "textual-dev>=1.0.0",
     "ruff>=0.1.0",
     "pyright>=1.1.350",
+    "freezegun>=1.5.5",
 ]
 docs = [
     "mkdocs>=1.5.0",
@@ -80,7 +81,7 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py311"
 exclude = [
-    "**/monarchmoney.py",  # External vendor code (from hammem/monarchmoney)
+    "**/monarch_client.py",  # External vendor code (from hammem/monarchmoney)
 ]
 
 [tool.ruff.lint]
@@ -96,7 +97,7 @@ include = ["moneyflow", "tests"]
 exclude = [
     "**/__pycache__",
     ".venv",
-    "**/monarchmoney.py",  # External vendor code (from hammem/monarchmoney)
+    "**/monarch_client.py",  # External vendor code (from hammem/monarchmoney)
     "**/screens/**",       # UI layer - has unavoidable Optional types from Textual
     "**/widgets/**",       # UI layer
 ]
