@@ -21,13 +21,13 @@ class TestYNABBackend:
         mock_budget.id = "test-budget-id"
         mock_budget.name = "Test Budget"
 
-        mock_budgets_response = MagicMock()
-        mock_budgets_response.data.budgets = [mock_budget]
+        mock_plans_response = MagicMock()
+        mock_plans_response.data.plans = [mock_budget]
 
-        mock_budgets_api = MagicMock()
-        mock_budgets_api.get_budgets.return_value = mock_budgets_response
+        mock_plans_api = MagicMock()
+        mock_plans_api.get_plans.return_value = mock_plans_response
 
-        mock_ynab_api.BudgetsApi.return_value = mock_budgets_api
+        mock_ynab_api.PlansApi.return_value = mock_plans_api
 
         await backend.login(password="test-access-token")
 
@@ -41,13 +41,13 @@ class TestYNABBackend:
 
     @pytest.mark.asyncio
     async def test_login_no_budgets(self, backend, mock_ynab_api):
-        mock_budgets_response = MagicMock()
-        mock_budgets_response.data.budgets = []
+        mock_plans_response = MagicMock()
+        mock_plans_response.data.plans = []
 
-        mock_budgets_api = MagicMock()
-        mock_budgets_api.get_budgets.return_value = mock_budgets_response
+        mock_plans_api = MagicMock()
+        mock_plans_api.get_plans.return_value = mock_plans_response
 
-        mock_ynab_api.BudgetsApi.return_value = mock_budgets_api
+        mock_ynab_api.PlansApi.return_value = mock_plans_api
 
         with pytest.raises(ValueError, match="No budgets found"):
             await backend.login(password="test-access-token")
@@ -155,10 +155,51 @@ class TestYNABBackend:
         mock_ynab_api.PayeesApi.return_value = mock_payees_api
 
         result = await backend.update_transaction(
-            transaction_id="txn-1", merchant_name="New Merchant", category_id="cat-2"
+            transaction_id="txn-1",
+            merchant_name="New Merchant",
+            category_id="00000000-0000-0000-0000-000000000002",
         )
 
         assert result["updateTransaction"]["transaction"]["id"] == "txn-1"
+
+    @pytest.mark.asyncio
+    async def test_update_transaction_uncategorized_placeholder(self, backend, mock_ynab_api):
+        """_convert_transaction emits 'uncategorized' for transactions with no
+        category, so update_transaction must treat it as None rather than
+        attempting uuid.UUID('uncategorized')."""
+        backend.client.budget_id = "test-budget-id"
+        backend.client.api_client = MagicMock()
+
+        mock_existing_txn = MagicMock()
+        mock_existing_txn.account_id = "acc-1"
+        mock_existing_txn.var_date = "2025-01-15"
+        mock_existing_txn.amount = -50000
+
+        mock_get_response = MagicMock()
+        mock_get_response.data.transaction = mock_existing_txn
+
+        mock_updated_txn = MagicMock()
+        mock_updated_txn.id = "txn-1"
+
+        mock_update_response = MagicMock()
+        mock_update_response.data.transaction = mock_updated_txn
+
+        mock_transactions_api = MagicMock()
+        mock_transactions_api.get_transaction_by_id.return_value = mock_get_response
+        mock_transactions_api.update_transaction.return_value = mock_update_response
+
+        mock_ynab_api.TransactionsApi.return_value = mock_transactions_api
+
+        # Should not raise ValueError
+        result = await backend.update_transaction(
+            transaction_id="txn-1", category_id="uncategorized"
+        )
+
+        assert result["updateTransaction"]["transaction"]["id"] == "txn-1"
+        # Verify the update_data passed to PutTransactionWrapper had category_id=None
+        # (the mock receives the actual update_data MagicMock as a kwarg)
+        wrapper_call = mock_ynab_api.PutTransactionWrapper.call_args
+        assert wrapper_call[1]["transaction"].category_id is None
 
     @pytest.mark.asyncio
     async def test_delete_transaction_success(self, backend, mock_ynab_api):
@@ -351,7 +392,7 @@ class TestYNABBackend:
         assert result is True
         mock_payees_api.update_payee.assert_called_once()
         call_args = mock_payees_api.update_payee.call_args
-        assert call_args[1]["budget_id"] == "test-budget-id"
+        assert call_args[1]["plan_id"] == "test-budget-id"
         assert call_args[1]["payee_id"] == "payee-123"
 
     def test_update_payee_invalid_name_empty(self, backend):
@@ -543,7 +584,7 @@ class TestYNABBackend:
 
         # Verify batch transaction update was called
         mock_transactions_api.get_transactions_by_payee.assert_called_once_with(
-            budget_id="test-budget-id", payee_id="payee-old"
+            plan_id="test-budget-id", payee_id="payee-old"
         )
         mock_transactions_api.update_transactions.assert_called_once()
 
@@ -663,7 +704,7 @@ class TestYNABBackend:
         # Verify payee was updated (in real API, this cascades to all transactions)
         mock_payees_api.update_payee.assert_called_once()
         call_args = mock_payees_api.update_payee.call_args
-        assert call_args[1]["budget_id"] == "test-budget-id"
+        assert call_args[1]["plan_id"] == "test-budget-id"
         assert call_args[1]["payee_id"] == "payee-amazon-old"
 
         # Verify cache was invalidated (so next fetch gets updated data)
@@ -766,11 +807,11 @@ class TestYNABBackend:
         mock_budget.name = "Test Budget"
         mock_budget.currency_format = None
 
-        mock_budgets_response = MagicMock()
-        mock_budgets_response.data.budgets = [mock_budget]
+        mock_plans_response = MagicMock()
+        mock_plans_response.data.plans = [mock_budget]
 
-        mock_budgets_api = MagicMock()
-        mock_budgets_api.get_budgets.return_value = mock_budgets_response
+        mock_plans_api = MagicMock()
+        mock_plans_api.get_plans.return_value = mock_plans_response
 
         # Mock accounts
         mock_checking = MagicMock()
@@ -793,7 +834,7 @@ class TestYNABBackend:
         mock_accounts_api = MagicMock()
         mock_accounts_api.get_accounts.return_value = mock_accounts_response
 
-        mock_ynab_api.BudgetsApi.return_value = mock_budgets_api
+        mock_ynab_api.PlansApi.return_value = mock_plans_api
         mock_ynab_api.AccountsApi.return_value = mock_accounts_api
 
         await backend.login(password="test-access-token")
@@ -1083,11 +1124,11 @@ class TestYNABBackend:
         mock_budget2.name = "Business Budget"
         mock_budget2.currency_format = None
 
-        mock_budgets_response = MagicMock()
-        mock_budgets_response.data.budgets = [mock_budget1, mock_budget2]
+        mock_plans_response = MagicMock()
+        mock_plans_response.data.plans = [mock_budget1, mock_budget2]
 
-        mock_budgets_api = MagicMock()
-        mock_budgets_api.get_budgets.return_value = mock_budgets_response
+        mock_plans_api = MagicMock()
+        mock_plans_api.get_plans.return_value = mock_plans_response
 
         # Mock accounts
         mock_accounts_response = MagicMock()
@@ -1095,7 +1136,7 @@ class TestYNABBackend:
         mock_accounts_api = MagicMock()
         mock_accounts_api.get_accounts.return_value = mock_accounts_response
 
-        mock_ynab_api.BudgetsApi.return_value = mock_budgets_api
+        mock_ynab_api.PlansApi.return_value = mock_plans_api
         mock_ynab_api.AccountsApi.return_value = mock_accounts_api
 
         # Login with specific budget ID
@@ -1111,13 +1152,13 @@ class TestYNABBackend:
         mock_budget.id = "budget-1"
         mock_budget.name = "Personal Budget"
 
-        mock_budgets_response = MagicMock()
-        mock_budgets_response.data.budgets = [mock_budget]
+        mock_plans_response = MagicMock()
+        mock_plans_response.data.plans = [mock_budget]
 
-        mock_budgets_api = MagicMock()
-        mock_budgets_api.get_budgets.return_value = mock_budgets_response
+        mock_plans_api = MagicMock()
+        mock_plans_api.get_plans.return_value = mock_plans_response
 
-        mock_ynab_api.BudgetsApi.return_value = mock_budgets_api
+        mock_ynab_api.PlansApi.return_value = mock_plans_api
 
         with pytest.raises(ValueError, match="Budget with ID 'invalid-id' not found"):
             await backend.login(password="test-token", budget_id="invalid-id")
@@ -1139,13 +1180,13 @@ class TestYNABBackend:
         mock_budget2.currency_format = MagicMock()
         mock_budget2.currency_format.currency_symbol = "€"
 
-        mock_budgets_response = MagicMock()
-        mock_budgets_response.data.budgets = [mock_budget1, mock_budget2]
+        mock_plans_response = MagicMock()
+        mock_plans_response.data.plans = [mock_budget1, mock_budget2]
 
-        mock_budgets_api = MagicMock()
-        mock_budgets_api.get_budgets.return_value = mock_budgets_response
+        mock_plans_api = MagicMock()
+        mock_plans_api.get_plans.return_value = mock_plans_response
 
-        mock_ynab_api.BudgetsApi.return_value = mock_budgets_api
+        mock_ynab_api.PlansApi.return_value = mock_plans_api
         backend.client.api_client = MagicMock()
 
         budgets = await backend.get_budgets()
@@ -1168,13 +1209,13 @@ class TestYNABBackend:
         mock_budget.last_modified_on = None
         mock_budget.currency_format = None
 
-        mock_budgets_response = MagicMock()
-        mock_budgets_response.data.budgets = [mock_budget]
+        mock_plans_response = MagicMock()
+        mock_plans_response.data.plans = [mock_budget]
 
-        mock_budgets_api = MagicMock()
-        mock_budgets_api.get_budgets.return_value = mock_budgets_response
+        mock_plans_api = MagicMock()
+        mock_plans_api.get_plans.return_value = mock_plans_response
 
-        mock_ynab_api.BudgetsApi.return_value = mock_budgets_api
+        mock_ynab_api.PlansApi.return_value = mock_plans_api
         backend.client.api_client = MagicMock()
 
         budgets = await backend.get_budgets()
