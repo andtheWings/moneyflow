@@ -107,7 +107,10 @@ echo "✓ Updated uv.lock"
 
 # Stage and commit
 git add pyproject.toml mkdocs.yml uv.lock
-git commit -m "chore: Bump version to $NEW_VERSION"
+# Version bumps land directly on the release branch (e.g. main) by design.
+# Skip only the no-commit-to-branch guard (which keeps day-to-day work off
+# main); every other pre-commit hook still runs on this commit.
+SKIP=no-commit-to-branch git commit -m "chore: Bump version to $NEW_VERSION"
 echo "✓ Committed version bump"
 
 # Create git tag
