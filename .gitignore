@@ -57,3 +57,7 @@ docs/assets/screenshots/*.png
 # Nix
 result
 result-*
+
+# Agent Tools
+.codegraph/
+.opencode/
