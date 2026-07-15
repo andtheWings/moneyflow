@@ -14,7 +14,7 @@ via cross-backend matching (precedent: `AmazonLinker`).
 
 ## Architecture
 
-```
+```text
 CLI (moneyflow import <institution> <path>)
                 │
                 ▼
@@ -151,6 +151,7 @@ CREATE TABLE import_history (
 ```
 
 **Interface** (implements `FinanceBackend` ABC):
+
 - `get_backend_type()` → `"csv_{institution_name}"` (e.g. `"csv_chase"`)
 - `get_display_labels()` → institution-aware labels
 - `get_transactions()` → list of standard transaction dicts with extras from JSON
@@ -176,6 +177,7 @@ def import_csv(
 ```
 
 **Flow**:
+
 1. Glob `**/{mapping.file_pattern}` under `path`
 2. Filter out files already recorded in `import_history` (unless `force=True`)
 3. `pl.read_csv(each_file, infer_schema_length=0)` + `pl.concat(all_dfs)`
