@@ -604,7 +604,7 @@ def test_insert_and_get_transactions(self, chase_backend):
     conn = chase_backend._get_connection()
     conn.execute(
         "INSERT INTO transactions (id, date, amount, merchant, extras) VALUES (?, ?, ?, ?, ?)",
-        ("chase_001", "2026-07-12", -50.0, "EXAMPLE GIFT SHOP", '{"raw_category":"Gifts"}'),
+        ("chase_001", "2024-01-15", -12.34, "EXAMPLE GIFT SHOP", '{"raw_category":"Gifts"}'),
     )
     conn.commit()
     conn.close()
@@ -613,8 +613,8 @@ def test_insert_and_get_transactions(self, chase_backend):
     assert result["totalCount"] == 1
     txn = result["results"][0]
     assert txn["id"] == "chase_001"
-    assert txn["date"] == "2026-07-12"
-    assert txn["amount"] == -50.0
+    assert txn["date"] == "2024-01-15"
+    assert txn["amount"] == -12.34
     assert txn["merchant"]["name"] == "EXAMPLE GIFT SHOP"
     assert txn["raw_category"] == "Gifts"  # extras unwrapped
     assert txn["hideFromReports"] is False
@@ -809,8 +809,8 @@ def test_csv_dir(tmp_path):
     csv_file = csv_dir / "test_data.csv"
     csv_file.write_text(
         "Transaction Date,Description,Amount\n"
-        "7/12/2026,EXAMPLE GIFT SHOP,-50.00\n"
-        "7/9/2026,EXAMPLE CAFE,-19.35\n"
+        "1/15/2024,EXAMPLE GIFT SHOP,-12.34\n"
+        "1/12/2024,EXAMPLE CAFE,-8.90\n"
     )
     return str(csv_dir)
 
@@ -1175,11 +1175,11 @@ Create `tests/data/chase_sample.csv`:
 
 ```csv
 Transaction Date,Post Date,Description,Category,Type,Amount,Memo
-7/12/2026,7/13/2026,EXAMPLE GIFT SHOP,Gifts & Donations,Sale,-50,
-7/12/2026,7/13/2026,EXAMPLE ONLINE STORE,Shopping,Sale,-13.47,
-7/9/2026,7/10/2026,EXAMPLE CAFE,Food & Drink,Sale,-19.35,
-7/9/2026,7/10/2026,EXAMPLE MARKET,Groceries,Sale,-6.31,
-7/7/2026,7/8/2026,EXAMPLE BOOK STORE,Shopping,Sale,-43.86,
+1/15/2024,1/16/2024,EXAMPLE GIFT SHOP,Gifts & Donations,Sale,-12.34,
+1/15/2024,1/16/2024,EXAMPLE ONLINE STORE,Shopping,Sale,-23.45,
+1/12/2024,1/13/2024,EXAMPLE CAFE,Food & Drink,Sale,-8.90,
+1/12/2024,1/13/2024,EXAMPLE MARKET,Groceries,Sale,-15.67,
+1/10/2024,1/11/2024,EXAMPLE BOOK STORE,Shopping,Sale,-18.90,
 ```
 
 - [ ] **Step 2: Create Chase credit card mapping**
@@ -1268,11 +1268,11 @@ class TestChaseCreditIntegration:
         # Verify one transaction
         conn = backend._get_connection()
         row = conn.execute(
-            "SELECT id, date, amount, merchant, category, notes, extras FROM transactions WHERE amount = -50.0"
+            "SELECT id, date, amount, merchant, category, notes, extras FROM transactions WHERE amount = -12.34"
         ).fetchone()
         conn.close()
         assert row is not None
-        assert row[1] == "2026-07-12"
+        assert row[1] == "2024-01-15"
         assert row[3] == "EXAMPLE GIFT SHOP"
         assert row[4] == "Gifts & Donations"
         assert row[5] == ""  # Memo was empty
