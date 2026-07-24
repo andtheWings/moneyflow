@@ -618,3 +618,26 @@ class TestEdgeCases:
         assert_cell(updated, "txn0", "merchant", "Target")
         assert_cell(updated, "txn1", "merchant", "Target")
         assert_cell(updated, "txn999", "merchant", "Target")
+
+
+def test_apply_suggested_category_edit_clears_suggestion():
+    from moneyflow.data.commit_orchestrator import apply_suggested_category_edit
+
+    df = pl.DataFrame(
+        {
+            "id": ["txn1"],
+            "category_id": ["cat_uncategorized"],
+            "category": ["Uncategorized"],
+            "group": ["Uncategorized"],
+            "suggested_category": ["Groceries"],
+            "matching_patterns": [["*WHOLEFDS*"]],
+        }
+    )
+    updated = apply_suggested_category_edit(
+        df, "txn1", "cat_groceries", "Groceries", "Food & Dining"
+    )
+
+    assert updated["category"][0] == "Groceries"
+    assert updated["group"][0] == "Food & Dining"
+    assert updated["suggested_category"][0] is None
+    assert updated["matching_patterns"][0] is None

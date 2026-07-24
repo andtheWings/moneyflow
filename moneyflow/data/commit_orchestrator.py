@@ -284,3 +284,38 @@ def apply_edits_to_dataframe(
         result_df = apply_groups_func(result_df)
 
     return result_df
+
+
+def apply_suggested_category_edit(
+    df: pl.DataFrame,
+    transaction_id: str,
+    new_category_id: str,
+    category_name: str,
+    category_group: str,
+) -> pl.DataFrame:
+    """
+    Apply an approved category suggestion and clear suggestion columns.
+
+    Args:
+        df: Transaction DataFrame with suggested_category column.
+        transaction_id: ID of transaction to update.
+        new_category_id: New category ID.
+        category_name: New category display name.
+        category_group: New category group name.
+
+    Returns:
+        Updated DataFrame with category changed and suggestion cleared.
+    """
+    updated = apply_category_edit(
+        df, transaction_id, new_category_id, category_name, category_group
+    )
+    return updated.with_columns(
+        pl.when(pl.col("id") == transaction_id)
+        .then(pl.lit(None))
+        .otherwise(pl.col("suggested_category"))
+        .alias("suggested_category"),
+        pl.when(pl.col("id") == transaction_id)
+        .then(pl.lit(None))
+        .otherwise(pl.col("matching_patterns"))
+        .alias("matching_patterns"),
+    )
