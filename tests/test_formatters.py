@@ -12,7 +12,7 @@ import polars as pl
 from rich.text import Text
 
 from moneyflow.data.state import SortDirection, SortMode
-from moneyflow.tui.formatters import ViewPresenter
+from moneyflow.tui.formatters import ViewPresenter, format_category_with_suggestion
 
 
 def normalize_label(label: str | Text) -> str:
@@ -1071,3 +1071,17 @@ class TestViewPresenterIntegration:
 
         assert len(view["rows"]) == 1000
         assert not view["empty"]
+
+
+def test_format_category_with_suggestion():
+    assert format_category_with_suggestion("Uncategorized", "Groceries", 1) == "Uncategorized → Groceries"
+
+
+def test_format_category_without_suggestion():
+    assert format_category_with_suggestion("Shopping", None, 0) == "Shopping"
+
+
+def test_format_category_with_multiple_matches():
+    text = format_category_with_suggestion("Uncategorized", "Shopping", 3)
+    assert "Shopping" in text
+    assert "3" in text

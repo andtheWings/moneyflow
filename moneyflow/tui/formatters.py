@@ -750,6 +750,12 @@ class ViewPresenter:
             date = str(row_dict["date"])
             merchant = row_dict["merchant"] or "Unknown"
             category = row_dict["category"] or "Uncategorized"
+            suggested_category = row_dict.get("suggested_category")
+            matching_patterns = row_dict.get("matching_patterns") or []
+            match_count = len(matching_patterns) if isinstance(matching_patterns, list) else 0
+            category_display = format_category_with_suggestion(
+                category, suggested_category, match_count
+            )
             account = row_dict.get("account", "Unknown")
             amount = row_dict["amount"]
             txn_id = row_dict["id"]
@@ -763,7 +769,7 @@ class ViewPresenter:
             row_data = [
                 date,
                 merchant,
-                category,
+                category_display,
                 account,
                 ViewPresenter.format_amount(amount, for_table=True),
             ]
@@ -850,3 +856,16 @@ class ViewPresenter:
         )
 
         return PreparedView(columns=columns, rows=rows, empty=False)
+
+
+def format_category_with_suggestion(
+    category: Optional[str], suggested: Optional[str], match_count: int = 0
+) -> str:
+    """Render a category cell with optional suggestion indicator."""
+    base = category or "Uncategorized"
+    if not suggested:
+        return base
+    suffix = f" → {suggested}"
+    if match_count > 1:
+        suffix += f" ({match_count} matches)"
+    return base + suffix
