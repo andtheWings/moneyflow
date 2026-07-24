@@ -1691,3 +1691,41 @@ class TestSkipBatchFor:
         # Should use batch
         assert len(mock_mm.update_calls) == 0
         assert ("Amazon.com/abc", "Amazon") in bulk_renames
+
+
+def test_data_manager_applies_category_patterns():
+    import tempfile
+    from pathlib import Path
+
+    from tests.mock_backend import MockMonarchMoney
+
+    backend = MockMonarchMoney()
+    with tempfile.TemporaryDirectory() as tmp:
+        profile_dir = Path(tmp)
+        config = profile_dir / "config.yaml"
+        config.write_text(
+            """
+version: 1
+category_patterns:
+  - pattern: "*COFFEE*"
+    category: "Coffee Shops"
+"""
+        )
+        dm = DataManager(
+            mm=backend,
+            config_dir=tmp,
+            profile_dir=profile_dir,
+            backend_type="monarch",
+        )
+        dm.df = pl.DataFrame(
+            {
+                "id": ["txn1", "txn2"],
+                "merchant": ["JOE COFFEE", "WHOLEFDS"],
+                "description": ["", ""],
+                "notes": ["", ""],
+                "category": ["Uncategorized", "Uncategorized"],
+            }
+        )
+        dm.apply_category_patterns()
+
+        assert dm.df["suggested_category"].to_list() == ["Coffee Shops", None]

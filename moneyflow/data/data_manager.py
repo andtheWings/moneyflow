@@ -26,6 +26,7 @@ import polars as pl
 
 from ..backends.base import FinanceBackend
 from ..logging_config import get_logger
+from .category_patterns import CategoryPatternMatcher
 from .categories import (
     build_category_to_group_mapping,
     convert_api_categories_to_groups,
@@ -35,6 +36,7 @@ from .categories import (
     save_categories_to_config,
     save_categories_to_profile,
 )
+from .pattern_store import PatternStore
 from .state import TimeGranularity
 
 logger = get_logger(__name__)
@@ -257,6 +259,11 @@ class DataManager:
             Path(merchant_cache_dir), max_age_hours=self.MERCHANT_CACHE_MAX_AGE_HOURS
         )
 
+        # Pattern store for auto-categorization
+        self.pattern_store = PatternStore(
+            profile_dir if profile_dir else Path(self.config_dir)
+        )
+
     async def refresh_merchant_cache(
         self, force: bool = False, skip_cache: bool = False
     ) -> List[str]:
@@ -313,6 +320,22 @@ class DataManager:
             all_merchants = cached_series.unique().sort()
 
         return all_merchants.to_list()
+
+    def apply_category_patterns(self) -> None:
+        """Apply user-defined category patterns and add suggestion columns."""
+        if self.df is None or self.df.is_empty():
+            return
+
+        patterns = self.pattern_store.load_patterns()
+        if not patterns:
+            self.df = self.df.with_columns(
+                pl.lit(None).alias(CategoryPatternMatcher.SUGGESTION_COLUMN),
+                pl.lit(None).alias(CategoryPatternMatcher.MATCHING_PATTERNS_COLUMN),
+            )
+            return
+
+        matcher = CategoryPatternMatcher(patterns)
+        self.df = matcher.suggest(self.df)
 
     async def fetch_all_data(
         self,
