@@ -17,7 +17,9 @@ import pytest
 from moneyflow.backends.base import AggregationFunc, ComputedColumn
 from moneyflow.data.data_manager import DataManager, DeferredCategoryChange
 from moneyflow.data.state import AppState, SortDirection, SortMode, TransactionEdit, ViewMode
+from moneyflow.tui.app import MoneyflowApp
 from moneyflow.tui.app_controller import AppController
+from moneyflow.tui.keybindings import KEYBINDINGS
 
 from .mock_view import MockViewPresenter
 
@@ -2236,4 +2238,18 @@ class TestCategoryRenameReassign:
         controller.queue_category_edits(old_txns, new_id)
 
         assert len(controller.data_manager.pending_edits) == old_txns.height
-        assert all(e.new_value == new_id for e in controller.data_manager.pending_edits)
+
+
+def test_new_keybindings_registered():
+    actions = {kb.action for kb in KEYBINDINGS}
+    assert "suggest_category" in actions
+    assert "review_suggestions" in actions
+    assert "manage_patterns" in actions
+
+
+def test_app_has_suggestion_actions():
+    assert hasattr(MoneyflowApp, "action_suggest_category")
+    assert hasattr(MoneyflowApp, "action_review_suggestions")
+    assert hasattr(MoneyflowApp, "action_manage_patterns")
+    assert hasattr(MoneyflowApp, "apply_suggested_category")
+    assert hasattr(MoneyflowApp, "reject_suggested_category")

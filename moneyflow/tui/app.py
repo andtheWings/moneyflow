@@ -47,6 +47,7 @@ from ..data.categories import (
     categories_dict_to_config_groups,
     save_categories_to_profile,
 )
+from ..data.commit_orchestrator import apply_suggested_category_edit
 from ..data.data_manager import DataManager, DeferredCategoryChange
 from ..data.duplicate_detector import DuplicateDetector
 from ..data.exporter import (
@@ -149,8 +150,12 @@ class MoneyflowApp(App):
         Binding("t", "toggle_time_granularity", "Toggle Time", show=False),
         Binding("a", "clear_time_period", "Clear Time", show=False),
         # Sorting
-        Binding("s", "toggle_sort_field", "Sort", show=True),
+        Binding("o", "toggle_sort_field", "Sort", show=True),
         Binding("v", "reverse_sort", "↕ Reverse", show=True),
+        # Auto-categorization
+        Binding("s", "suggest_category", "Suggest", show=True),
+        Binding("S", "review_suggestions", "Suggestions", show=True, key_display="S"),
+        Binding("P", "manage_patterns", "Patterns", show=True, key_display="P"),
         # Time navigation with arrows
         Binding("left", "prev_period", "← Prev", show=True),
         Binding("right", "next_period", "→ Next", show=True),
@@ -1371,6 +1376,69 @@ class MoneyflowApp(App):
         """Toggle sorting field."""
         field_name = self.controller.toggle_sort_field()
         self.notify(f"Sorting by: {field_name}", timeout=1)
+
+    def action_suggest_category(self) -> None:
+        """Accept the suggestion for the selected transaction(s)."""
+        if self.data_manager is None or self.data_manager.df is None:
+            return
+        table = self.query_one("#data-table", DataTable)
+        cursor_row = table.cursor_row if table.cursor_row >= 0 else 0
+        context = self.controller.determine_edit_context("category", cursor_row=cursor_row)
+        if context.transactions.is_empty():
+            self.notify("No transactions selected")
+            return
+
+        for txn in context.transactions.iter_rows(named=True):
+            suggested = txn.get("suggested_category")
+            if not suggested:
+                continue
+            self.apply_suggested_category(txn["id"], suggested)
+
+    def action_review_suggestions(self) -> None:
+        """Open batch suggestion review screen."""
+        if self.data_manager is None or self.data_manager.df is None:
+            return
+        from .screens.category_suggestion_review import CategorySuggestionReviewScreen
+
+        self.push_screen(CategorySuggestionReviewScreen(self.data_manager.df, self))
+
+    def action_manage_patterns(self) -> None:
+        """Open pattern management screen."""
+        from .screens.category_patterns_screen import CategoryPatternsScreen
+
+        self.push_screen(CategoryPatternsScreen(self))
+
+    def apply_suggested_category(self, transaction_id: str, category_name: str) -> None:
+        """Apply an approved suggestion and queue a normal category edit."""
+        if self.data_manager is None or self.data_manager.df is None:
+            return
+        category_id = None
+        for cid, cat in (self.data_manager.categories or {}).items():
+            if cat.get("name") == category_name:
+                category_id = cid
+                break
+        if category_id is None:
+            self.notify(f"Unknown category: {category_name}")
+            return
+
+        txn_df = self.data_manager.df.filter(pl.col("id") == transaction_id)
+        self.controller.queue_category_edits(txn_df, category_id)
+        self.data_manager.df = apply_suggested_category_edit(
+            self.data_manager.df,
+            transaction_id,
+            category_id,
+            category_name,
+            self.data_manager.category_to_group.get(category_name, "Unknown"),
+        )
+        self.controller.refresh_view()
+
+    def reject_suggested_category(self, transaction_id: str) -> None:
+        """Record a rejected suggestion."""
+        if self.data_manager is None:
+            return
+        rejected = self.data_manager.pattern_store.load_rejected()
+        rejected.add(transaction_id)
+        self.data_manager.pattern_store.save_rejected(rejected)
 
     def action_show_filters(self) -> None:
         """Show filter options modal."""
