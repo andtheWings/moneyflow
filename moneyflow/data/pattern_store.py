@@ -57,7 +57,9 @@ class PatternStore:
                 CategoryPattern(
                     pattern=str(raw.get("pattern", "")),
                     category=str(raw.get("category", "")),
-                    fields=tuple(fields) if isinstance(fields, list) else ("merchant", "description", "notes"),
+                    fields=tuple(fields)
+                    if isinstance(fields, list)
+                    else ("merchant", "description", "notes"),
                     only_when_uncategorized=bool(raw.get("only_when_uncategorized", True)),
                     enabled=bool(raw.get("enabled", True)),
                     description=raw.get("description"),

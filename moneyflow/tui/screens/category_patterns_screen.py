@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal
 from textual.screen import Screen
-from textual.widgets import Button, Input, Label, Select, Static, Switch
+from textual.widgets import Button, Input, Label, Static
 
 from ...data.category_patterns import CategoryPattern
 from ...logging_config import get_logger
@@ -73,9 +73,7 @@ class CategoryPatternsScreen(Screen):
             pattern_text = pattern_input.value.strip()
             category_text = category_input.value.strip()
             if pattern_text and category_text:
-                self.patterns.append(
-                    CategoryPattern(pattern=pattern_text, category=category_text)
-                )
+                self.patterns.append(CategoryPattern(pattern=pattern_text, category=category_text))
                 pattern_input.value = ""
                 category_input.value = ""
                 self._render_patterns()

@@ -1074,7 +1074,10 @@ class TestViewPresenterIntegration:
 
 
 def test_format_category_with_suggestion():
-    assert format_category_with_suggestion("Uncategorized", "Groceries", 1) == "Uncategorized → Groceries"
+    assert (
+        format_category_with_suggestion("Uncategorized", "Groceries", 1)
+        == "Uncategorized → Groceries"
+    )
 
 
 def test_format_category_without_suggestion():

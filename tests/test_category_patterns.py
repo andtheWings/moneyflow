@@ -1,5 +1,5 @@
 import polars as pl
-import pytest
+
 from moneyflow.data.category_patterns import CategoryPattern, CategoryPatternMatcher, _compile_glob
 
 

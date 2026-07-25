@@ -26,7 +26,6 @@ import polars as pl
 
 from ..backends.base import FinanceBackend
 from ..logging_config import get_logger
-from .category_patterns import CategoryPatternMatcher
 from .categories import (
     build_category_to_group_mapping,
     convert_api_categories_to_groups,
@@ -36,6 +35,7 @@ from .categories import (
     save_categories_to_config,
     save_categories_to_profile,
 )
+from .category_patterns import CategoryPatternMatcher
 from .pattern_store import PatternStore
 from .state import TimeGranularity
 
@@ -260,9 +260,7 @@ class DataManager:
         )
 
         # Pattern store for auto-categorization
-        self.pattern_store = PatternStore(
-            profile_dir if profile_dir else Path(self.config_dir)
-        )
+        self.pattern_store = PatternStore(profile_dir if profile_dir else Path(self.config_dir))
 
     async def refresh_merchant_cache(
         self, force: bool = False, skip_cache: bool = False

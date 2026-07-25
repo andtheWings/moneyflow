@@ -171,6 +171,4 @@ class CategorySuggestionReviewScreen(Screen):
 
     def _update_status(self) -> None:
         status = self.query_one("#status-line", Static)
-        status.update(
-            f"Accepted: {len(self.accepted_ids)}  Rejected: {len(self.rejected_ids)}"
-        )
+        status.update(f"Accepted: {len(self.accepted_ids)}  Rejected: {len(self.rejected_ids)}")

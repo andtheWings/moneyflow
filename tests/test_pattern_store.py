@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 from moneyflow.data.category_patterns import CategoryPattern
 from moneyflow.data.pattern_store import PatternStore
 

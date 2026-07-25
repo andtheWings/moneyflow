@@ -2,7 +2,6 @@
 
 import polars as pl
 import pytest
-
 from textual.widgets import DataTable
 
 from moneyflow.tui.app import MoneyflowApp

@@ -1,7 +1,6 @@
 """Tests for the category pattern management screen."""
 
 import pytest
-from textual.pilot import Pilot
 
 from moneyflow.tui.app import MoneyflowApp
 from moneyflow.tui.screens.category_patterns_screen import CategoryPatternsScreen

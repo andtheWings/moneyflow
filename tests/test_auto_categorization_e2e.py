@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import polars as pl
-import pytest
 
 from moneyflow.data.category_patterns import CategoryPattern, CategoryPatternMatcher
 from moneyflow.data.commit_orchestrator import apply_suggested_category_edit
