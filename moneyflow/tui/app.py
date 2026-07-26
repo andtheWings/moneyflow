@@ -150,11 +150,11 @@ class MoneyflowApp(App):
         Binding("t", "toggle_time_granularity", "Toggle Time", show=False),
         Binding("a", "clear_time_period", "Clear Time", show=False),
         # Sorting
-        Binding("o", "toggle_sort_field", "Sort", show=True),
+        Binding("s", "toggle_sort_field", "Sort", show=True),
         Binding("v", "reverse_sort", "↕ Reverse", show=True),
         # Auto-categorization
-        Binding("s", "suggest_category", "Suggest", show=True),
-        Binding("S", "review_suggestions", "Suggestions", show=True, key_display="S"),
+        Binding("y", "suggest_category", "Suggest", show=True),
+        Binding("Y", "review_suggestions", "Suggestions", show=True, key_display="Y"),
         Binding("P", "manage_patterns", "Patterns", show=True, key_display="P"),
         # Time navigation with arrows
         Binding("left", "prev_period", "← Prev", show=True),

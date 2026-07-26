@@ -45,11 +45,11 @@ KEYBINDINGS: List[KeyBinding] = [
     KeyBinding("←", "prev_period", "Previous time period (when drilled into time)", "Time"),
     KeyBinding("→", "next_period", "Next time period (when drilled into time)", "Time"),
     # Sorting
-    KeyBinding("o", "toggle_sort_field", "Toggle sort field (count/amount/date)", "Sorting"),
+    KeyBinding("s", "toggle_sort_field", "Toggle sort field (count/amount/date)", "Sorting"),
     KeyBinding("v", "reverse_sort", "Reverse sort direction", "Sorting"),
     # Auto-categorization
-    KeyBinding("s", "suggest_category", "Accept/reject category suggestion", "Actions"),
-    KeyBinding("S", "review_suggestions", "Review all category suggestions", "Actions"),
+    KeyBinding("y", "suggest_category", "Accept/reject category suggestion", "Actions"),
+    KeyBinding("Y", "review_suggestions", "Review all category suggestions", "Actions"),
     KeyBinding("P", "manage_patterns", "Manage category patterns", "System"),
     # Transaction Actions
     KeyBinding("i", "show_info", "Show transaction info/details", "Actions"),
